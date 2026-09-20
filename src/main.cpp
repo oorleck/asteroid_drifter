@@ -170,7 +170,7 @@ int main(int argc, char** argv) {
     bool peaceful = false;
     bool showcase = false, shipGallery = false;
     bool weaponTest = false, shopTest = false, keyLog = false, lifeTest = false, shipTest = false;
-    bool soundCheck = false, soundTest = false, soundQuick = false, noSound = false, soundGameTest = false;
+    bool soundCheck = false, soundTest = false, soundQuick = false, noSound = false, soundGameTest = false, syncTest = false;
     float volumeArg = -1.0f;
     float aimX = -1, aimY = -1;
     for (int i = 1; i < argc; ++i) {
@@ -195,6 +195,7 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "-soundtest"))            soundTest = true;
         else if (!strcmp(argv[i], "-soundquick"))           { soundTest = true; soundQuick = true; }
         else if (!strcmp(argv[i], "-soundgametest"))        soundGameTest = true;
+        else if (!strcmp(argv[i], "-synctest"))             syncTest = true;
         else if (!strcmp(argv[i], "-nosound"))              noSound = true;
         else if (!strcmp(argv[i], "-volume") && i + 1 < argc) volumeArg = (float)atof(argv[++i]);
         else if (!strcmp(argv[i], "-showcase"))             showcase = true;
@@ -970,6 +971,120 @@ int main(int argc, char** argv) {
         fflush(stdout);
         renderer.shutdown();
         return 0;
+    }
+
+    if (syncTest) {
+        // Does one seed give the same rocks however the player got there? A joining
+        // client could only generate the world for itself if it did.
+        //
+        // It does not, and this measures by how much. Chunk generation asks
+        // spaceFree() about the rocks that happen to be loaded at that moment, and on
+        // a rejected placement it retries, drawing more random numbers; the rock's own
+        // seed is only consumed when a placement succeeds. So one rejection shifts the
+        // stream for the rest of the chunk, and the divergence cascades into the
+        // neighbours. That is harmless in a single-player game, and it is why a
+        // multiplayer host has to send the rocks rather than name a seed.
+        //
+        // This is a diagnostic, not a regression test. What it does hold the game to
+        // is the control at the end: one seed and one path must always rebuild the
+        // same world, or nothing is reproducible.
+        printf("synctest:\n");
+        int failures = 0;
+        auto check = [&](bool ok, const char* what) {
+            printf("  %-66s %s\n", what, ok ? "ok" : "FAIL");
+            if (!ok) ++failures;
+        };
+        struct Rock { double x, y; float r; uint32_t seed; };
+        auto chunkOf = [](dv2 p, i64& cx, i64& cy) {
+            cx = (i64)std::floor(p.x / cfg::CHUNK);
+            cy = (i64)std::floor(p.y / cfg::CHUNK);
+        };
+        auto rocksIn = [&](World& w, i64 cx, i64 cy) {
+            std::vector<Rock> out;
+            for (const Body& b : w.bodies) {
+                if (!b.alive) continue;
+                i64 bx, by;  chunkOf(b.pos, bx, by);
+                if (bx != cx || by != cy) continue;
+                out.push_back({ b.pos.x, b.pos.y, b.radius, b.seed });
+            }
+            std::sort(out.begin(), out.end(), [](const Rock& a, const Rock& b) {
+                return a.x != b.x ? a.x < b.x : a.y < b.y;
+            });
+            return out;
+        };
+        auto same = [](const std::vector<Rock>& a, const std::vector<Rock>& b) {
+            if (a.size() != b.size()) return false;
+            for (size_t i = 0; i < a.size(); ++i)
+                if (std::fabs(a[i].x - b[i].x) > 1e-9 || std::fabs(a[i].y - b[i].y) > 1e-9 ||
+                    std::fabs(a[i].r - b[i].r) > 1e-4f || a[i].seed != b[i].seed) return false;
+            return true;
+        };
+        // Walk a world along a path, streaming as a player would.
+        auto walk = [&](World& w, dv2 from, dv2 to, int steps) {
+            for (int i = 0; i <= steps; ++i) {
+                const double t = (double)i / steps;
+                const dv2 p(from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t);
+                w.streamChunks(p, 1300.0, 100000);
+                w.step(1.0f / 60.0f, p);
+            }
+        };
+
+        const dv2 MEET(12000.0, 0.0);
+        i64 mcx, mcy;  chunkOf(MEET, mcx, mcy);
+
+        // Two players arriving at the same place from opposite directions.
+        static World wEast, wWest;
+        wEast.init(0x5EEDFACEull);
+        wWest.init(0x5EEDFACEull);
+        walk(wEast, dv2(0, 0), MEET, 40);                    // came from the west
+        walk(wWest, dv2(24000.0, 0.0), MEET, 40);            // came from the east
+        const auto a = rocksIn(wEast, mcx, mcy);
+        const auto b = rocksIn(wWest, mcx, mcy);
+        printf("  chunk (%lld,%lld): approached from the west %d rocks, from the east %d rocks\n",
+               (long long)mcx, (long long)mcy, (int)a.size(), (int)b.size());
+        for (size_t i = 0; i < std::max(a.size(), b.size()); ++i) {
+            if (i < a.size()) printf("      west: (%9.2f,%9.2f) r=%6.1f seed=%u\n", a[i].x, a[i].y, a[i].r, a[i].seed);
+            if (i < b.size()) printf("      east: (%9.2f,%9.2f) r=%6.1f seed=%u\n", b[i].x, b[i].y, b[i].r, b[i].seed);
+        }
+        const bool chunkAgrees = same(a, b);
+        printf("  -> reaching a chunk from two directions gives %s\n",
+               chunkAgrees ? "the same rocks" : "DIFFERENT rocks");
+
+        // The same question over a whole region, which is what a client would need.
+        {
+            int chunksSame = 0, chunksDiff = 0, rocksA = 0, rocksB = 0;
+            for (i64 cy = mcy - 1; cy <= mcy + 1; ++cy)
+                for (i64 cx = mcx - 1; cx <= mcx + 1; ++cx) {
+                    const auto ra = rocksIn(wEast, cx, cy), rb = rocksIn(wWest, cx, cy);
+                    rocksA += (int)ra.size();  rocksB += (int)rb.size();
+                    if (same(ra, rb)) ++chunksSame; else ++chunksDiff;
+                }
+            printf("  the 3x3 chunks around the meeting point: %d match, %d differ (%d rocks vs %d)\n",
+                   chunksSame, chunksDiff, rocksA, rocksB);
+            printf("  -> a client cannot be given a seed and left to build the world: it must be sent %d rocks\n",
+                   rocksA);
+            check(chunksDiff == 0 || !chunkAgrees,
+                  "the finding is consistent: generation depends on the route taken");
+        }
+
+        // A control: the same path twice must always agree, or nothing is reproducible.
+        {
+            static World w1, w2;
+            w1.init(0x5EEDFACEull);
+            w2.init(0x5EEDFACEull);
+            walk(w1, dv2(0, 0), MEET, 40);
+            walk(w2, dv2(0, 0), MEET, 40);
+            bool allSame = true;
+            for (i64 cy = mcy - 1; cy <= mcy + 1; ++cy)
+                for (i64 cx = mcx - 1; cx <= mcx + 1; ++cx)
+                    allSame = allSame && same(rocksIn(w1, cx, cy), rocksIn(w2, cx, cy));
+            check(allSame, "the same path twice always gives the same world");
+        }
+
+        printf("synctest: %s\n", failures == 0 ? "PASS" : "FAIL");
+        fflush(stdout);
+        renderer.shutdown();
+        return failures == 0 ? 0 : 1;
     }
 
     if (soundCheck) {
