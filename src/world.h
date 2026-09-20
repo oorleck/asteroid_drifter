@@ -113,6 +113,7 @@ struct World {
     // ---- journalling, for replicating the world to another machine ---------
     bool     journal = false;      // when on, every shape change is recorded in ops
     std::vector<WorldOp> ops;
+    std::vector<uint32_t> fullSync;        // rocks restored from a saved chunk: to be sent whole, not replayed
     uint32_t nextNetId = 1;        // the host hands these out
     std::unordered_map<uint32_t, int> byNetId;    // net id -> slot, kept while journalling
     uint32_t assignNetId(int slot);
@@ -141,6 +142,9 @@ struct World {
     void step(float dt, dv2 focus);
     void syncGeometry(Renderer& r);      // budgeted contour rebuild + GPU upload
     void settleDirty();                  // the split/re-centre half of that, which needs no renderer
+    // Rebuilds the list of live rocks and the broadphase, without moving anything: what a
+    // client needs so that probe() and gravityAt() work on rocks the host is simulating.
+    void refreshIndex(dv2 focus);
     void collectRenderData(const Camera& cam, Renderer& r,
                            std::vector<BodyXform>& xf,
                            std::vector<int>& firsts, std::vector<int>& counts);

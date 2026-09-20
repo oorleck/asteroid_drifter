@@ -18,7 +18,8 @@ namespace net {
 
 // ------------------------------------------------------------- LoopLink --
 bool LoopLink::send(const uint8_t* d, size_t n, int peer) {
-    if (!other || n == 0 || n > MAX_PACKET) return false;
+    LoopLink* dst = (peer >= 0 && peer < MAX_PLAYERS && targets[peer]) ? targets[peer] : other;
+    if (!dst || n == 0 || n > MAX_PACKET) return false;
     bytesSent += n;
     ++packetsSent;
     // Drop a share of packets on the floor if asked, so the reliable channel has
@@ -28,8 +29,8 @@ bool LoopLink::send(const uint8_t* d, size_t n, int peer) {
     Pending p;
     p.data.assign(d, d + n);
     p.peer = myPeer;                       // the far end sees who it came from
-    p.due = other->now + latency;
-    other->queue.push_back(std::move(p));
+    p.due = dst->now + latency;
+    dst->queue.push_back(std::move(p));
     return true;
 }
 
@@ -154,18 +155,28 @@ void Reliable::queue(const std::vector<uint8_t>& payload) {
 }
 
 void Reliable::collect(double now, std::vector<std::vector<uint8_t>>& out, size_t byteBudget) {
-    // What has been sent and not yet acknowledged counts as in flight.
+    // What has been sent and not yet acknowledged, in either way, counts as in flight.
     size_t inFlight = 0;
-    for (const Out& o : outbox) if (o.tries > 0) inFlight += o.payload.size() + 6;
+    int inFlightMsgs = 0;
+    uint32_t highestSacked = 0;
+    for (const Out& o : outbox) {
+        if (o.sacked) { highestSacked = std::max(highestSacked, o.seq); continue; }
+        if (o.tries > 0) { inFlight += o.payload.size() + 6; ++inFlightMsgs; }
+    }
 
     size_t spent = 0;
     for (Out& o : outbox) {
-        if (now - o.sentAt < resendAfter) continue;
+        if (o.sacked) continue;                                          // they have it: nothing to do until the gap before it closes
         if (o.tries >= maxTries) continue;
+        // A message that later ones have overtaken and been acknowledged is almost certainly
+        // lost: do not wait the whole timer for it.
+        const bool overtaken = o.tries > 0 && highestSacked > o.seq + 2 && now - o.sentAt > std::max(0.05, srtt);
+        if (!overtaken && now - o.sentAt < resendAfter) continue;
         const size_t cost = o.payload.size() + 6;
         if (spent + cost > byteBudget && spent > 0) break;               // the rest goes next flush, in order
-        if (o.tries == 0 && inFlight + spent > maxInFlight) break;       // do not pile new data on top of unacked data
+        if (o.tries == 0 && (inFlight + spent > maxInFlight || inFlightMsgs >= maxMessagesInFlight)) break;
         spent += cost;
+        if (o.tries == 0) ++inFlightMsgs;
         o.sentAt = now;
         if (o.tries > 0) ++resent;
         ++o.tries;
@@ -184,11 +195,30 @@ void Reliable::rttSample(double s) {
     resendAfter = std::max(0.12, std::min(1.5, srtt * 1.5 + 0.06));
 }
 
-void Reliable::ack(uint32_t through) {
+void Reliable::ack(uint32_t through, uint64_t sack) {
+    // The selective bits are relative to `through`, so they only mean something if it is
+    // the newest thing we have heard: a late, stale packet must not mark the wrong messages.
+    const bool current = through >= ackedThrough;
     if (through > ackedThrough) ackedThrough = through;
+    if (current) {
+        for (Out& o : outbox) {
+            if (o.seq <= ackedThrough) continue;
+            const uint32_t d = o.seq - ackedThrough;                  // 1 is the message the peer is missing
+            if (d >= 2 && d - 2 < 64 && ((sack >> (d - 2)) & 1)) o.sacked = true;
+        }
+    }
     outbox.erase(std::remove_if(outbox.begin(), outbox.end(),
                                 [&](const Out& o) { return o.seq <= ackedThrough; }),
                  outbox.end());
+}
+
+uint64_t Reliable::sackBits() const {
+    uint64_t bits = 0;
+    for (const In& h : holding) {
+        const uint32_t d = h.seq - wantSeq;                          // 0 is the one we are waiting for
+        if (d >= 1 && d - 1 < 64) bits |= 1ull << (d - 1);
+    }
+    return bits;
 }
 
 void Reliable::accept(uint32_t seq, const uint8_t* d, size_t n,
@@ -227,7 +257,7 @@ namespace net {
 namespace {
 constexpr size_t FRAGMENT = 900;             // payload bytes per fragment: well inside one packet
 constexpr uint8_t FRAG_MORE = 0xFE, FRAG_LAST = 0xFF;   // message ids are all below 0x80
-constexpr size_t HEADER = 11;                // kind, ack, stamp, echo, hold
+constexpr size_t HEADER = 19;                // kind, ack, sack, stamp, echo, hold
 }
 
 void Endpoint::sendReliable(const std::vector<uint8_t>& payload) {
@@ -243,10 +273,11 @@ void Endpoint::sendReliable(const std::vector<uint8_t>& payload) {
 }
 
 // Every packet begins with the same header.
-static void writeHeader(std::vector<uint8_t>& pk, uint8_t kind, uint32_t ack, double now,
+static void writeHeader(std::vector<uint8_t>& pk, uint8_t kind, uint32_t ack, uint64_t sack, double now,
                         bool haveStamp, uint16_t lastStamp, double lastStampAt) {
     pk.push_back(kind);
     for (int i = 0; i < 4; ++i) pk.push_back((uint8_t)(ack >> (8 * i)));
+    for (int i = 0; i < 8; ++i) pk.push_back((uint8_t)(sack >> (8 * i)));
     const uint16_t stamp = (uint16_t)((uint32_t)(now * 1000.0) & 0xFFFF);
     pk.push_back((uint8_t)stamp);  pk.push_back((uint8_t)(stamp >> 8));
     const uint16_t echo = haveStamp ? lastStamp : 0;
@@ -259,7 +290,7 @@ void Endpoint::sendUnreliable(const std::vector<uint8_t>& payload) {
     if (!link || payload.empty() || payload.size() + HEADER > (size_t)MAX_PACKET) return;
     std::vector<uint8_t> pk;
     pk.reserve(payload.size() + HEADER);
-    writeHeader(pk, 2, rel.wantSeq - 1, now, haveStamp, lastStamp, lastStampAt);
+    writeHeader(pk, 2, rel.wantSeq - 1, rel.sackBits(), now, haveStamp, lastStamp, lastStampAt);
     pk.insert(pk.end(), payload.begin(), payload.end());
     link->send(pk.data(), pk.size(), peer);
     ++unreliableSent;
@@ -271,8 +302,8 @@ void Endpoint::flush(double t) {
     if (!link) return;
     std::vector<std::vector<uint8_t>> framed;         // each is seq:u32 + payload
     rel.collect(now, framed, rel.bytesPerFlush);
-
     const uint32_t ack = rel.wantSeq - 1;
+    const uint64_t sack = rel.sackBits();
     std::vector<uint8_t> pk;
     bool open = false;
     for (const auto& m : framed) {
@@ -282,7 +313,7 @@ void Endpoint::flush(double t) {
             ++reliableSent;
             open = false;
         }
-        if (!open) { pk.clear(); writeHeader(pk, 1, ack, now, haveStamp, lastStamp, lastStampAt); open = true; }
+        if (!open) { pk.clear(); writeHeader(pk, 1, ack, sack, now, haveStamp, lastStamp, lastStampAt); open = true; }
         pk.push_back((uint8_t)(m.size() & 0xFF));
         pk.push_back((uint8_t)(m.size() >> 8));
         pk.insert(pk.end(), m.begin(), m.end());
@@ -294,7 +325,7 @@ void Endpoint::flush(double t) {
     }
     if (wantsAck) {                                   // nothing else to carry it
         pk.clear();
-        writeHeader(pk, 0, ack, now, haveStamp, lastStamp, lastStampAt);
+        writeHeader(pk, 0, ack, sack, now, haveStamp, lastStamp, lastStampAt);
         link->send(pk.data(), pk.size(), peer);
         ++ackOnlySent;
         wantsAck = false;
@@ -305,34 +336,38 @@ void Endpoint::poll(double t) {
     now = t;
     if (!link) return;
     Packet p;
+    while (link->recv(p)) feed(p, t);
+}
+
+void Endpoint::feed(const Packet& p, double t) {
+    now = t;
     std::vector<std::vector<uint8_t>> got;
-    while (link->recv(p)) {
-        Reader r(p.data.data(), p.data.size());
-        const uint8_t kind = r.u8();
-        const uint32_t ack = r.u32();
-        const uint16_t stamp = r.u16(), echo = r.u16(), hold = r.u16();
-        if (r.bad) continue;
-        haveStamp = true;  lastStamp = stamp;  lastStampAt = now;
-        if (hold != 0xFFFF) {
-            // Our clock now, minus the stamp of ours they echoed, minus how long they held it.
-            const uint16_t nowMs = (uint16_t)((uint32_t)(now * 1000.0) & 0xFFFF);
-            const uint16_t ms = (uint16_t)(nowMs - echo - hold);
-            if (ms < 5000) rel.rttSample(ms / 1000.0);
+    Reader r(p.data.data(), p.data.size());
+    const uint8_t kind = r.u8();
+    const uint32_t ack = r.u32();
+    const uint64_t sack = r.u64();
+    const uint16_t stamp = r.u16(), echo = r.u16(), hold = r.u16();
+    if (r.bad) return;
+    haveStamp = true;  lastStamp = stamp;  lastStampAt = now;
+    if (hold != 0xFFFF) {
+        // Our clock now, minus the stamp of ours they echoed, minus how long they held it.
+        const uint16_t nowMs = (uint16_t)((uint32_t)(now * 1000.0) & 0xFFFF);
+        const uint16_t ms = (uint16_t)(nowMs - echo - hold);
+        if (ms < 5000) rel.rttSample(ms / 1000.0);
+    }
+    rel.ack(ack, sack);
+    if (kind == 1) {
+        while (r.left() >= 6) {
+            const uint16_t len = r.u16();
+            const uint32_t seq = r.u32();
+            if (r.bad || len < 4 || (size_t)(len - 4) > r.left()) break;
+            const size_t payload = (size_t)len - 4;
+            rel.accept(seq, r.p + r.at, payload, got);
+            r.at += payload;
         }
-        rel.ack(ack);
-        if (kind == 1) {
-            while (r.left() >= 6) {
-                const uint16_t len = r.u16();
-                const uint32_t seq = r.u32();
-                if (r.bad || len < 4 || (size_t)(len - 4) > r.left()) break;
-                const size_t payload = (size_t)len - 4;
-                rel.accept(seq, r.p + r.at, payload, got);
-                r.at += payload;
-            }
-            wantsAck = true;
-        } else if (kind == 2) {
-            unreliable.emplace_back(r.p + r.at, r.p + r.n);
-        }
+        wantsAck = true;
+    } else if (kind == 2) {
+        unreliable.emplace_back(r.p + r.at, r.p + r.n);
     }
     // Put large messages back together. They arrive in order, so this is a matter
     // of gluing fragments until the last one.

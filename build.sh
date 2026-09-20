@@ -3,7 +3,7 @@
 set -e
 export PATH="/c/msys64/mingw64/bin:$PATH"
 CXX=${CXX:-g++}
-SRC="src/main.cpp src/game.cpp src/level.cpp src/level_hud.cpp src/enemies.cpp src/enemies_fx.cpp src/ships.cpp src/versus.cpp src/audio.cpp src/sounds.cpp src/audio_game.cpp src/audio_check.cpp src/net.cpp src/net_world.cpp src/weapons.cpp src/shop.cpp src/world.cpp src/render.cpp src/field.cpp src/gl.cpp"
+SRC="src/main.cpp src/game.cpp src/level.cpp src/level_hud.cpp src/enemies.cpp src/enemies_fx.cpp src/ships.cpp src/versus.cpp src/net_game.cpp src/audio.cpp src/sounds.cpp src/audio_game.cpp src/audio_check.cpp src/net.cpp src/net_world.cpp src/weapons.cpp src/shop.cpp src/world.cpp src/render.cpp src/field.cpp src/gl.cpp"
 OUT=build/asteroid.exe
 mkdir -p build
 if [ "$1" = "debug" ]; then

@@ -13,6 +13,8 @@
 #include "render.h"
 #include "rules.h"
 #include "audio.h"
+#include "net.h"
+#include <string>
 
 struct Input {
     bool  down[256]   = {};
@@ -484,9 +486,12 @@ struct Game {
         bool    bot = false;
         float   botClock = 0, botBurst = 0, botAimErr = 0, botStrafe = 1, botJumpCd = 0;
         int     netPeer = -1;          // which connection it is, for humans on the wire
+        // On a client, other players are only ever told where they are; these let them glide.
+        dv2     netPos;  v2 netVel;  double netAt = 0;  bool netHave = false;
     };
     bool    versus = false;
     bool    netClient = false;         // a client does not decide matches: the host does
+    char    localName[16] = "PILOT";   // what this machine calls its player when it joins or hosts
     std::vector<Peer> peers;
     PlayerCmd localCmd;                // the local player's command, kept between frames for its counters
     Rng     vsRng{0x5EED};             // spawn choices; only the host uses it
@@ -512,6 +517,24 @@ struct Game {
     void addKillMsg(const char* text, Col c);
     void drawVersusHud(Renderer& r);
     void drawPlayerFig(Renderer& r, const Player& p);
+
+    // ---- network play (net_game.cpp)
+    struct NetSession* net = nullptr;
+    bool netHost = false;
+    bool startHost(Renderer& r, int port, int bots, std::string* err = nullptr, bool loopbackOnly = false);
+    bool startClient(Renderer& r, const char* ip, int port, std::string* err = nullptr);
+    bool startHostOn(Renderer& r, net::Link* link, int bots);        // over a link somebody else made: the tests
+    bool startClientOn(Renderer& r, net::Link* link);
+    void netShutdown();
+    void netBegin(float dt);       // reads the network and applies it
+    void netEnd(float dt);         // sends what changed
+    void netShot(const Bullet& b); // host: tell the clients a round was fired
+    void netKilled(int killer, int victim, dv2 at);
+    void killEffects(int killer, int victim, dv2 at);   // the announcement, the bang and the sound
+    Bullet makeBullet(const Player& p, dv2 pos, v2 vel, bool heavy) const;
+    std::string netStatus() const;                       // one line for the HUD
+    bool netConnected() const;
+    float netRtt() const;
 
     // ---- sound (audio_game.cpp)
     void sfx(Sfx s, dv2 at, float vol = 1.0f, float pitch = 1.0f, float range = 1600.0f, float delay = 0.0f);

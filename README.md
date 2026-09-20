@@ -8,8 +8,13 @@ between levels you spend what you earn at a **supply depot**.
 Every asteroid is fully destructible. Holes are real holes, and when you cut a
 rock in two you get two rocks, each with its own mass, spin and gravity.
 
+There is also a **versus mode**, against bots or over the network with up to eight
+players, where everyone shoots everyone in an arena of asteroids (see *Versus and
+multiplayer*).
+
 **No external dependencies.** No GLFW, no GLAD, no GLM, no CMake required. The
-whole thing links against `opengl32` and `gdi32`, which ship with Windows.
+whole thing links against `opengl32`, `gdi32`, `winmm` (sound) and `ws2_32`
+(networking), which ship with Windows.
 
 ---
 
@@ -144,55 +149,97 @@ Sounds are placed in the world: louder the nearer they are to the spaceman, and
 panned by where they are on screen. **`M` turns sound off and on.**
 
 
-### Multiplayer (in progress)
+### Versus and multiplayer
 
-The plan is a versus mode: one player hosts, up to a few others join over the
-internet by IP, and everyone shoots everyone. **The networking core exists and
-is tested; the game does not use it yet.** What is done:
+A separate mode where the players shoot each other. There are no levels, enemies,
+clock or depot: an arena of asteroids, and everyone has the rifle, the shell and
+the rocket.
 
-* **The world can be replicated.** A rock is a pure function of its radius and
-  seed plus the holes cut in it, so the wire never carries geometry: a rock costs
-  about 48 bytes to introduce and a hole about 22. `World` keeps an optional
-  journal of every shape change (`World::ops`), and `net::HostReplicator` turns it
-  into messages that `net::ClientReplicator` applies to a world that started empty.
-* **Rock motion is dead-reckoned.** There are hundreds of rocks, so the host only
-  sends one when the client's guess has drifted, plus a slow refresh so a lost
-  packet cannot strand a rock. Motion is quantised to 20 bytes a rock.
+    asteroid.exe -versus 3                 # practise against 3 bots, on your own
+    asteroid.exe -host                     # host a match; 4790 is the default port
+    asteroid.exe -host 4790 2              # ...with 2 bots in it as well
+    asteroid.exe -join 192.168.1.20:4790   # join one
+    asteroid.exe -join 192.168.1.20 -name ACE
+
+* **Rules.** 100 suit and no healing. A rifle round does 5, a shell 42 plus a
+  blast that hurts everyone in reach (including you). You are out for 3 seconds,
+  then reappear on a rock away from the others, untouchable for 2. A wall of
+  inward push marks the edge of the arena. A suicide costs a frag. **First to 10
+  frags wins**, the result stays up for 8 seconds, and a new match starts (Enter
+  starts it at once).
+* **Bots** are sparring partners, not champions. They lead their shots but wobble,
+  fire in bursts, jump about, and fly at you with the rocket; about 30% of their
+  rounds land. Walking is off (see *Tuning*), so a bot can only leave its rock by
+  jumping along the surface normal, which took some teaching.
+* **The screen.** A scoreboard at the top, a kill feed down the right, a name tag
+  and health bar over every opponent in view, an arrow to each one that is not,
+  and a connection line (`CONNECTED   PING 28 MS   7 KB/S`) at the top left.
+  Shots are tinted with their owner's colour.
+* **Hosting.** One machine hosts and the others join by address. On a LAN or over
+  a VPN (Tailscale, ZeroTier) that is all there is to it. Over the internet the
+  host needs the UDP port forwarded on its router; there is no matchmaking server
+  or NAT traversal, deliberately, because that would be something to run and pay
+  for. The first `-host` will make Windows ask whether to allow the game through
+  the firewall. Up to 8 players.
+
+**How it works.** The host runs the only real simulation, exactly as an offline
+match does. A client sends what its player is doing (aim, rocket, fire, and jump
+and shell *counts* so a lost packet cannot swallow one) and draws what it is told.
+It does not wait to be told where its own spaceman is: it runs the same
+`stepPlayer()` locally against the rocks it knows about, and eases toward the
+host's version whenever a snapshot arrives. Everyone else glides between
+snapshots. Bullets on a client are only pictures; the host decides what they hit.
+
+* **The world is replicated by its history, not its shape.** A rock is a pure
+  function of its radius and seed plus the holes cut in it, so the wire never
+  carries geometry: a rock costs about 48 bytes to introduce and a hole about 22.
+  `World` keeps an optional journal of every change (`World::ops`), and
+  `net::HostReplicator` turns it into messages that `net::ClientReplicator`
+  replays on a world that started empty. There is one journal and one
+  replicator per client, since each remembers what *that* client believes.
+* **Rock motion is dead-reckoned.** The host sends a rock's position only when the
+  client's guess has drifted, plus a slow refresh. Quantised to 20 bytes a rock.
 * **A small reliable channel over UDP** (`net::Endpoint`): ordered, batched into
-  packets, acknowledgements piggybacked on everything, big messages fragmented,
-  and a resend timer that learns the round trip from echoed timestamps.
-* **Divergence is audited and repaired.** Both sides keep summaries of shot-up
-  rocks (solid-sample count and centroid). A rock that differs by more than noise
-  is sent whole. The summary is deliberately tolerant: an exact hash turned a
+  packets, cumulative *and selective* acknowledgements piggybacked on everything,
+  large messages fragmented, a resend timer that learns the round trip from
+  echoed timestamps, and pacing (no more than 14 KB per tick, 60 messages in
+  flight). Selective acks cut re-sends by 3-4x on a lossy link.
+* **Divergence is audited and repaired.** Every shot-up rock is compared by a
+  solid-sample count and centroid, about 50 a second; one that differs by more
+  than noise is sent whole. It is deliberately tolerant: an exact hash turned a
   0.001-unit difference in one carve into 62 repairs and 913 KB.
 
-Measured by `-nettest` between two in-process worlds (the client's world starts
-empty and is built from messages alone), with two people shooting, 5% loss, 60 ms:
-about **5 KB/s** to the client, 33-53 KB to join a 470-rock field, and rocks agree
-exactly at the end. Eight shooters: about 12 KB/s. It also survives 20% loss and
-150 ms, a client deliberately made wrong, and a client whose carves land slightly
-off.
+**Measured** with two whole games in one process (`-netgametest`, the client's
+world starting empty), including a run over real UDP sockets on the loopback
+interface and one with a host and two clients:
 
-What `-synctest` found, and the reason it works this way: **a seed does not
-determine the world.** Chunk generation asks about the rocks that happen to be
-loaded, so the same chunk reached from two directions holds different rocks (0 of
-9 chunks matched). A joining client cannot generate its own world; the host has to
-send it.
+| Link | Result |
+| --- | --- |
+| clean, 2% loss / 40 ms, 8% / 90 ms, 20% / 150 ms | worlds agree exactly at the end; kills, frags and names match on every screen |
+| host to one client, while fighting | 7-8 KB/s (loss barely changes it: the resends are a small share) |
+| joining | 33-43 KB for 650 rocks |
+| a kill announced to a client | instantly on a good link; up to about half a second late at 20% loss / 150 ms (the death itself never is: it rides on the snapshots) |
+| client's own spaceman | agrees with the host within 10 units on a clean link, 55 at 90 ms |
 
-The audit is a slow safety net, not a fast one: it walks every shot-up rock at
-about 50 a second, so a rock that went wrong is noticed within roughly 15 seconds
-(13 s in the test). That is fine for the rare divergence it exists for, and the
-reliable channel is paced (no more than 14 KB per tick, 48 KB in flight), because
-without that a burst of 120 KB overflowed the receiver's socket buffer.
+Two real processes (`-host ... -loopback` and `-join 127.0.0.1:...`, real windows
+and rendering) connected at a 30 ms ping.
 
-What is *not* done: the game itself (N players, per-player camera and shop, input
-over the wire, client-side prediction, player and bullet replication). The UDP
-code is tested over real sockets on the loopback interface (`-udptest`: 60 messages
-including 20 KB ones, intact and in order, 0 resends) but has not been run between
-two machines or through a router. And nothing has been tried against a different
-CPU, which is the main remaining risk: the tolerant audit is designed for it, but
-a real cross-machine difference could still be larger than the noise it was tested
-with.
+Two things this work found that are worth knowing. **A seed does not determine
+the world** (`-synctest`): chunk generation asks about the rocks that happen to be
+loaded, so the same chunk reached from two directions held different rocks (0 of 9
+matched), and a joining client has to be sent its world. And **a snapshot can
+beat the Welcome that says which player you are** on a lossy link, which briefly
+made a client its own opponent; it now ignores snapshots until welcomed.
+
+**What is not proven.** It has been run between processes on one machine, never
+between two computers or through a router. The main risk is a different CPU:
+carve arithmetic that differs in the last bits is tolerated up to a point (tested
+with nudges of 0.05 units), and beyond it the audit repairs the rock, but a real
+cross-machine difference could still be larger than that. Prediction of the
+player against a rock that is itself being corrected is simple and untuned for
+high latency: expect some rubber-banding above about 150 ms. Only the rifle, the
+shell and the rocket exist in a match; the shield, force field, salvo and nukes
+do not.
 
 ---
 
@@ -273,6 +320,12 @@ Test harnesses. Each prints `PASS`/`FAIL` (or a summary) and exits:
     -nettest         replicate a shot-up world to an empty one, with loss and latency
     -udptest         the same protocol over real loopback sockets
     -versus [N]      shoot it out with N bots (default 1) in an arena
+    -host [PORT] [BOTS]  host a match (default port 4790), optionally with 0-7 bots
+    -join ADDRESS[:PORT] join a match
+    -name NAME       what you are called in a match (default PILOT)
+    -loopback        with -host: listen on this machine only (for testing; no firewall prompt)
+    -versustest      versus rules, respawns, frag limit, bots
+    -netgametest     two and three whole games in one process, over lossy links and real sockets
     -nosound         start without sound
     -volume V        master volume, 0 to 1.5                     (default 0.8)
     -soundcheck      analyse every synthesised sound and exercise the mixer, no device needed;
@@ -537,6 +590,9 @@ A few notes on what interacts with what:
     src/net.h          multiplayer protocol, transport, replication (see Multiplayer)
     src/net.cpp        UDP link, loopback link, reliable channel, endpoint
     src/net_world.cpp  turning a World into messages and back
+    src/versus.cpp     versus mode: arena, spawning, damage, frags, bots, the match HUD
+    src/net_game.cpp   a match over the network: joining, commands, snapshots, prediction
+    src/net_session.h  the state of one end of a match
     src/sounds.cpp     the synthesis of every sound
     src/audio.*        the mixer, reverb and Windows waveOut device
     src/audio_game.cpp how game events become sounds; the sounds that last

@@ -142,6 +142,11 @@ void Game::updateBullets(float dt) {
             if (bulletHitsTargets(b) || (versus && bulletHitsPlayers(b))) { spent = true; break; }
             const int hit = world.solidAt(b.pos);
             if (hit < 0) continue;
+            if (netClient) {                          // the host decides what a round does to a rock
+                spawnSparks(b.pos, b.vel * -0.1f, b.heavy ? 8 : 3, 120.0f, b.col, 0.3f);
+                spent = true;
+                break;
+            }
 
             world.damage(hit, b.pos, b.caliber, 0.34f, rng.u32());
             b.budget -= stepLen;
@@ -194,7 +199,7 @@ void Game::fire(Player& p, bool heavy) {
     b.col     = heavy ? C_HEAVY : C_BULLET;
     if (versus) b.col = mix(b.col, p.tint, 0.55f);     // so you can tell whose shot it is
     bullets.push_back(b);
-    if (versus) ++vsShots;
+    if (versus) { ++vsShots; if (netHost) netShot(b); }
 
     p.vel -= d2 * (heavy ? 145.0f : 6.0f);
     if (self) shake = std::max(shake, heavy ? 0.5f : 0.07f);
@@ -430,7 +435,7 @@ void Game::update(Renderer& r, const Input& in, float dt) {
     if (!paused && state == State::Dead && stateTime > rules::DEATH_TIME) retryLevel(r);
     // R (or Enter on the game-over screen) starts a fresh run.
     if (versus) {
-        if (match.over && match.overTime > 1.0f && (in.pressed['R'] || in.pressed[VK_RETURN])) resetMatch();
+        if (!netClient && match.over && match.overTime > 1.0f && (in.pressed['R'] || in.pressed[VK_RETURN])) resetMatch();   // on a client the host decides
     } else if (in.pressed['R'] || (state == State::GameOver && stateTime > 0.8f && in.pressed[VK_RETURN])) {
         if (sandbox) respawn();
         else         startRun(r);
@@ -453,7 +458,8 @@ void Game::update(Renderer& r, const Input& in, float dt) {
     } else if (!paused) {
         time += dt;
         const dv2 prev = pl.pos;
-        world.step(dt, pl.pos);
+        if (net) netBegin(dt);
+        if (!netClient) world.step(dt, pl.pos);        // a client is told where the rocks are
         if (!playerGone()) {
             updatePlayer(r, in, dt);
             updateField(dt);
@@ -470,6 +476,7 @@ void Game::update(Renderer& r, const Input& in, float dt) {
         updateLevel(dt);
         updateParticles(dt);
         drainWorldEvents();
+        if (net) netEnd(dt);
         distanceTravelled += len(pl.pos - prev);
         shake = approach(shake, 0.0f, 5.0f, dt);
         flash = approach(flash, 0.0f, 2.4f, dt);
@@ -497,7 +504,8 @@ void Game::update(Renderer& r, const Input& in, float dt) {
         cam.pos.y += j.y;
     }
 
-    if (versus) world.streamChunks(dv2(0, 0), rules::ARENA_RADIUS + 1500.0);
+    if (netClient) {}                              // the host sends the rocks: a client must not make its own
+    else if (versus) world.streamChunks(dv2(0, 0), rules::ARENA_RADIUS + 1500.0);
     else        world.streamChunks(cam.pos, cam.halfW * 1.7 + 1500.0);
     world.syncGeometry(r);
     updateAudio(dt);

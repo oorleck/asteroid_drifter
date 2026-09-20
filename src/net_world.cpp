@@ -397,3 +397,14 @@ void ClientReplicator::deadReckon(float dt) {
 }
 
 }  // namespace net
+
+namespace net {
+void HostReplicator::collectFullSyncs(std::vector<std::vector<uint8_t>>& out) {
+    for (uint32_t id : w->fullSync) {
+        std::vector<uint8_t> f;
+        writeField(id, f);
+        if (!f.empty()) out.push_back(std::move(f));
+    }
+    w->fullSync.clear();
+}
+}  // namespace net

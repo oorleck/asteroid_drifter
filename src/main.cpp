@@ -2,6 +2,7 @@
 // No external libraries: everything links against opengl32 and gdi32.
 #include "gl.h"
 #include "game.h"
+#include "net_session.h"
 #include "net.h"
 #include <cstdio>
 #include <cstdlib>
@@ -171,8 +172,11 @@ int main(int argc, char** argv) {
     bool peaceful = false;
     bool showcase = false, shipGallery = false;
     bool weaponTest = false, shopTest = false, keyLog = false, lifeTest = false, shipTest = false;
-    bool soundCheck = false, soundTest = false, soundQuick = false, noSound = false, soundGameTest = false, syncTest = false, netTest = false, udpTest = false, versusTest = false;
-    int versusBots = 0;
+    bool soundCheck = false, soundTest = false, soundQuick = false, noSound = false, soundGameTest = false, syncTest = false, netTest = false, udpTest = false, versusTest = false, netGameTest = false;
+    int versusBots = 0, hostPort = 0, hostBots = 0;
+    bool loopbackOnly = false;
+    std::string playerName;
+    std::string joinAddr;
     float volumeArg = -1.0f;
     float aimX = -1, aimY = -1;
     for (int i = 1; i < argc; ++i) {
@@ -201,6 +205,11 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "-nettest"))              netTest = true;
         else if (!strcmp(argv[i], "-udptest"))              udpTest = true;
         else if (!strcmp(argv[i], "-versustest"))           versusTest = true;
+        else if (!strcmp(argv[i], "-netgametest"))          netGameTest = true;
+        else if (!strcmp(argv[i], "-host"))                 { hostPort = 4790; if (i + 1 < argc && argv[i + 1][0] >= '0' && argv[i + 1][0] <= '9') hostPort = atoi(argv[++i]); if (i + 1 < argc && argv[i + 1][0] >= '0' && argv[i + 1][0] <= '7' && strlen(argv[i + 1]) == 1) hostBots = atoi(argv[++i]); }
+        else if (!strcmp(argv[i], "-join") && i + 1 < argc)  joinAddr = argv[++i];
+        else if (!strcmp(argv[i], "-loopback"))             loopbackOnly = true;
+        else if (!strcmp(argv[i], "-name") && i + 1 < argc)  playerName = argv[++i];
         else if (!strcmp(argv[i], "-versus"))               { versusBots = 1; if (i + 1 < argc && argv[i + 1][0] >= '0' && argv[i + 1][0] <= '7') versusBots = atoi(argv[++i]); }
         else if (!strcmp(argv[i], "-nosound"))              noSound = true;
         else if (!strcmp(argv[i], "-volume") && i + 1 < argc) volumeArg = (float)atof(argv[++i]);
@@ -294,6 +303,19 @@ int main(int argc, char** argv) {
     if (povCam) game.povCamera = true;
     game.init(renderer, seed);
     if (versusBots > 0) game.startVersus(renderer, versusBots);      // -versus N: a match against N bots
+    if (!playerName.empty()) snprintf(game.localName, sizeof game.localName, "%s", playerName.c_str());
+    if (hostPort > 0) {
+        std::string err;
+        if (!game.startHost(renderer, hostPort, hostBots, &err, loopbackOnly)) fatal(("Could not host: " + err).c_str());
+        printf("hosting a match on UDP port %d. Others join with:  asteroid.exe -join <your address>:%d\n", hostPort, hostPort);
+        printf("(over the internet the port must be forwarded to this machine; on a LAN or a VPN it just works)\n");
+    } else if (!joinAddr.empty()) {
+        std::string ip = joinAddr;  int port = 4790;
+        const size_t colon = ip.find(':');
+        if (colon != std::string::npos) { port = atoi(ip.c_str() + colon + 1); ip = ip.substr(0, colon); }
+        std::string err;
+        if (!game.startClient(renderer, ip.c_str(), port, &err)) fatal(("Could not join: " + err).c_str());
+    }
     if (zoomArg > 0) { game.zoomTarget = zoomArg; game.cam.halfW = zoomArg; }
     if (wantFullscreen) toggleFullscreen(hwnd);
 
@@ -1089,6 +1111,453 @@ int main(int argc, char** argv) {
         }
 
         printf("synctest: %s\n", failures == 0 ? "PASS" : "FAIL");
+        fflush(stdout);
+        renderer.shutdown();
+        return failures == 0 ? 0 : 1;
+    }
+
+    if (netGameTest) {
+        // Two whole games in one process, a host and a client, joined by a link with
+        // configurable loss and latency. The client's world starts empty. Everything
+        // it ends up with, it was told.
+        printf("netgametest:\n");
+        int failures = 0;
+        auto check = [&](bool ok, const char* what) {
+            printf("  %-72s %s\n", what, ok ? "ok" : "FAIL");
+            if (!ok) ++failures;
+        };
+        const float dt = 1.0f / 60.0f;
+
+        static Game hostG, cliG;
+        struct Report { double kbps = 0; };
+
+        auto aimAtG = [&](Game& g, Input& in, dv2 target) {
+            const v2 rel = tov2(target - g.cam.pos);
+            const v2 q = rot(rel, std::cos(g.cam.angle), std::sin(g.cam.angle));
+            const float k = (float)renderer.fbw / (2.0f * g.cam.halfW);
+            in.mousePx = v2(renderer.fbw * 0.5f + q.x * k, renderer.fbh * 0.5f - q.y * k);
+        };
+
+        auto scenario = [&](const char* label, float loss, double latency, int bots, bool realSockets = false) {
+            printf("\n  [%s] %s, %d bots on the host\n", label,
+                   realSockets ? "real UDP sockets on the loopback interface" : "in-process link", bots);
+            if (!realSockets) printf("      loss %.0f%%, latency %.0f ms one way\n", loss * 100.0f, latency * 1000.0);
+            net::LoopLink la, lb;
+            la.other = &lb;  lb.other = &la;
+            la.loss = lb.loss = loss;
+            la.latency = lb.latency = latency;
+            la.rng = 1234;  lb.rng = 9876;
+            // Real sockets, when asked: bound to loopback only, so no firewall prompt and nothing leaves the machine.
+            static net::UdpLink sockHost, sockCli;
+            net::Link* hostLink = &la;
+            net::Link* cliLink = &lb;
+            if (realSockets) {
+                sockHost.close();  sockCli.close();
+                sockHost = net::UdpLink();  sockCli = net::UdpLink();
+                const bool ok = sockHost.open(47836, true) && sockCli.connect("127.0.0.1", 47836);
+                check(ok, "the sockets open");
+                hostLink = &sockHost;  cliLink = &sockCli;
+            }
+
+            // The client first: starting either one resets the renderer's shared vertex arena.
+            cliG.baseSeed = 0x5EEDFACEull;  hostG.baseSeed = 0x5EEDFACEull;
+            cliG.startClientOn(renderer, cliLink);
+            hostG.startHostOn(renderer, hostLink, bots);
+            hostG.invincible = false;  cliG.invincible = false;
+            Input hostIn, cliIn;
+            hostIn.mousePx = cliIn.mousePx = v2(renderer.fbw * 0.5f, renderer.fbh * 0.5f);
+            auto step = [&](int n) {
+                for (int i = 0; i < n; ++i) {
+                    if (realSockets) Sleep(1);                        // let the operating system deliver
+                    else { la.advance(dt);  lb.advance(dt); }
+                    cliG.update(renderer, cliIn, dt);
+                    hostG.update(renderer, hostIn, dt);
+                }
+            };
+            auto peerOf = [](Game& g, int id) -> Game::Peer* {
+                for (Game::Peer& p : g.peers) if (p.body.id == id) return &p;
+                return nullptr;
+            };
+            // How many of the host's rocks does the client have, and how many differ?
+            auto compareWorlds = [&](int& hostRocks, int& cliRocks, int& missing, int& differ, double& worst) {
+                std::unordered_map<uint32_t, int> hi, ci;
+                for (int s = 0; s < (int)hostG.world.bodies.size(); ++s)
+                    if (hostG.world.bodies[s].alive && hostG.world.bodies[s].netId) hi[hostG.world.bodies[s].netId] = s;
+                for (int s = 0; s < (int)cliG.world.bodies.size(); ++s)
+                    if (cliG.world.bodies[s].alive && cliG.world.bodies[s].netId) ci[cliG.world.bodies[s].netId] = s;
+                hostRocks = (int)hi.size();  cliRocks = (int)ci.size();
+                missing = 0;  differ = 0;  worst = 0;
+                for (auto& kv : hi) {
+                    auto it = ci.find(kv.first);
+                    if (it == ci.end()) { ++missing; continue; }
+                    if (!World::summariesClose(hostG.world.summarise(kv.second), cliG.world.summarise(it->second))) ++differ;
+                    worst = std::max(worst, len(hostG.world.bodies[kv.second].pos - cliG.world.bodies[it->second].pos));
+                }
+                for (auto& kv : ci) if (!hi.count(kv.first)) ++missing;
+            };
+
+            // ---- joining
+            step(60 * 5);
+            check(cliG.net && cliG.net->welcomed && !cliG.net->rejected, "the client is welcomed");
+            check(cliG.pl.id > 0 && cliG.pl.id != hostG.pl.id, "and is given an id of its own");
+            check(hostG.peers.size() == (size_t)bots + 1, "the host has a player for it");
+            check(cliG.peers.size() == (size_t)bots + 1, "and the client knows of the host and any bots");
+            check(peerOf(cliG, cliG.pl.id) == nullptr, "and it is never listed as its own opponent");
+            {
+                Game::Peer* h = peerOf(cliG, hostG.pl.id);
+                Game::Peer* mine = peerOf(hostG, cliG.pl.id);
+                printf("      names: host calls itself '%s' and the client '%s'; the client calls itself '%s' and the host '%s'\n", hostG.pl.name, mine ? mine->body.name : "?", cliG.pl.name, h ? h->body.name : "?");
+                check(h && std::strcmp(h->body.name, "HOST") == 0 && std::strcmp(hostG.pl.name, "HOST") == 0, "the host is called HOST on both machines");
+                check(mine && std::strcmp(cliG.pl.name, mine->body.name) == 0 && std::string(cliG.pl.name) == "PILOT " + std::to_string(cliG.pl.id),
+                      "the client is given the same name on both, numbered so two pilots are not confused");
+            }
+            {
+                int hr, cr, missing, differ; double worst;
+                compareWorlds(hr, cr, missing, differ, worst);
+                printf("      after joining: host %d rocks, client %d, %d missing, %d differing, worst position error %.1f\n", hr, cr, missing, differ, worst);
+                check(hr > 300 && missing == 0 && differ == 0, "it has been sent every rock, and they match");
+            }
+            check(!cliG.pl.dead, "the client has been put on a rock");
+            {
+                Game::Peer* mine = peerOf(hostG, cliG.pl.id);
+                check(mine && len(mine->body.pos - cliG.pl.pos) < 120.0, "where the client thinks it is matches where the host has it");
+            }
+
+            // A clear stage for the fighting: the host removes the rocks from a disc and the client is told.
+            const dv2 A(0.0, 0.0);
+            hostG.world.clearZone(A, 700.0);
+            step(30);
+            {
+                int inside = 0;
+                for (const Body& b : cliG.world.bodies) if (b.alive && len(b.pos - A) < 500.0) ++inside;
+                check(inside == 0, "rocks the host removed are gone from the client too");
+            }
+            auto stage = [&](double gap) {
+                hostG.resetMatch();
+                step(20);
+                Game::Peer* c = peerOf(hostG, cliG.pl.id);
+                hostG.pl.pos = dv2(-gap * 0.5, 0.0);   hostG.pl.vel = v2(0, 0);   hostG.pl.protect = 0.0f;
+                c->body.pos = dv2(gap * 0.5, 0.0);     c->body.vel = v2(0, 0);     c->body.protect = 0.0f;
+                hostG.bullets.clear();
+                for (Game::Peer& p : hostG.peers) if (p.bot) { p.body.dead = true; p.body.respawnIn = 999.0f; }
+                step(30);
+            };
+            auto hold = [&]() {                        // keep both in the same place while they shoot
+                Game::Peer* c = peerOf(hostG, cliG.pl.id);
+                hostG.pl.pos.y = 0.0;  hostG.pl.vel = v2(0, 0);
+                if (c) { c->body.pos.y = 0.0;  c->body.vel = v2(0, 0); }
+                cliG.pl.pos.y = 0.0;   cliG.pl.vel = v2(0, 0);
+            };
+
+            const uint64_t bytes0 = hostLink->bytesSent;
+            const double fightStart = hostG.net->now;
+
+            // ---- the client shoots the host
+            stage(500.0);
+            {
+                cliIn.mouse[0] = true;
+                for (int i = 0; i < 60; ++i) {
+                    hold();
+                    if (Game::Peer* h = peerOf(cliG, hostG.pl.id)) aimAtG(cliG, cliIn, h->body.pos);
+                    step(1);
+                }
+                cliIn.mouse[0] = false;
+                step(45);
+                const float lost = 100.0f - hostG.pl.health;
+                Game::Peer* h = peerOf(cliG, hostG.pl.id);
+                printf("      the client fired for a second: the host lost %.0f suit, the client sees %.0f\n", lost, h ? 100.0f - h->body.health : -1.0f);
+                check(lost >= rules::VS_RIFLE_DAMAGE, "rounds fired by a client on its own screen hurt the host's player");
+                check(h && std::fabs((100.0f - h->body.health) - lost) <= 1.0f, "and the client sees the same damage");
+                check(hostG.pl.id != cliG.pl.id && cliG.pl.health == 100.0f, "the client's own suit is untouched");
+            }
+
+            // ---- the host shoots the client, and the client sees the shots
+            stage(500.0);
+            size_t maxBullets = 0;
+            {
+                hostIn.mouse[0] = true;
+                for (int i = 0; i < 60; ++i) {
+                    hold();
+                    if (Game::Peer* c = peerOf(hostG, cliG.pl.id)) aimAtG(hostG, hostIn, c->body.pos);
+                    step(1);
+                    maxBullets = std::max(maxBullets, cliG.bullets.size());
+                }
+                hostIn.mouse[0] = false;
+                step(45);
+                Game::Peer* c = peerOf(hostG, cliG.pl.id);
+                printf("      the host fired for a second: the client lost %.0f suit; up to %d rounds in flight on its screen\n",
+                       100.0f - cliG.pl.health, (int)maxBullets);
+                check(c && cliG.pl.health < 100.0f, "rounds fired by the host hurt the client");
+                check(c && std::fabs(cliG.pl.health - c->body.health) <= 1.0f, "and the client's suit reading is the host's");
+                check(maxBullets > 3, "and the client saw the rounds fly");
+            }
+
+            // ---- a kill, seen by both
+            stage(500.0);
+            {
+                cliG.net->lastHealth = 100;
+                hostG.pl.health = 100.0f;
+                if (Game::Peer* c = peerOf(hostG, cliG.pl.id)) c->body.health = 10.0f;
+                hostIn.mouse[0] = true;
+                for (int i = 0; i < 240 && !cliG.pl.dead; ++i) {
+                    hold();
+                    if (Game::Peer* c = peerOf(hostG, cliG.pl.id)) aimAtG(hostG, hostIn, c->body.pos);
+                    step(1);
+                }
+                hostIn.mouse[0] = false;
+                int lag = 0;                                            // how long after the client learned of its death was it told who did it?
+                while (cliG.killFeed.empty() && lag++ < 240) step(1);
+                printf("      the announcement reached the client %d ms after it learned it had died\n", lag * 1000 / 60);
+                step(30);
+                Game::Peer* h = peerOf(cliG, hostG.pl.id);
+                check(cliG.pl.dead && cliG.pl.deaths == 1, "the client is told it has died");
+                check(hostG.pl.frags == 1 && h && h->body.frags == 1, "the host's frag is on both screens");
+                check(!hostG.killFeed.empty() && !cliG.killFeed.empty(), "and the kill is announced on both");
+                check(!cliG.killFeed.empty() && std::strstr(cliG.killFeed[0].text, "HOST") != nullptr && std::strstr(cliG.killFeed[0].text, cliG.pl.name) != nullptr, "with both their names");
+                step((int)((rules::RESPAWN_TIME + 0.6f) * 60.0f));
+                check(!cliG.pl.dead && cliG.pl.health == 100.0f, "the client comes back after the respawn time");
+                Game::Peer* mine = peerOf(hostG, cliG.pl.id);
+                check(mine && len(mine->body.pos - cliG.pl.pos) < 200.0, "at the place the host chose");
+            }
+
+            // ---- moving: the client runs its own spaceman, and the host must end up agreeing
+            {
+                hostG.world.clearZone(A, 700.0);
+                Game::Peer* c = peerOf(hostG, cliG.pl.id);
+                if (c) { c->body.pos = dv2(100.0, 0.0);  c->body.vel = v2(0, 0); }
+                cliG.pl.pos = dv2(100.0, 0.0);  cliG.pl.vel = v2(0, 0);
+                step(20);
+                const dv2 start = cliG.pl.pos;
+                cliIn.mouse[1] = true;                                    // the rocket
+                for (int i = 0; i < 90; ++i) {
+                    aimAtG(cliG, cliIn, dv2(cliG.pl.pos.x, cliG.pl.pos.y + 500.0));
+                    step(1);
+                }
+                cliIn.mouse[1] = false;
+                Game::Peer* after = peerOf(hostG, cliG.pl.id);
+                const double err = after ? len(after->body.pos - cliG.pl.pos) : 1e9;
+                printf("      the client flew %.0f units; the host has it %.1f units from where the client does\n",
+                       len(cliG.pl.pos - start), err);
+                check(len(cliG.pl.pos - start) > 100.0, "commands from the client move its spaceman");
+                check(err < 60.0 + latency * 2000.0, "and the two machines agree about where it ended up");
+            }
+
+            // ---- shooting rocks: the host carves them, the client is told how
+            {
+                int best = -1;
+                for (int s : hostG.world.active) {
+                    const Body& b = hostG.world.bodies[s];
+                    if (!b.alive || b.radius < 60.0f || len(b.pos) < 900.0 || len(b.pos) > 1700.0) continue;
+                    if (best < 0 || b.radius > hostG.world.bodies[best].radius) best = s;
+                }
+                if (best >= 0) {
+                    const Body& b = hostG.world.bodies[best];
+                    const v2 dirOut = norm(tov2(b.pos));
+                    const dv2 stand(b.pos.x - dirOut.x * (b.radius + 250.0), b.pos.y - dirOut.y * (b.radius + 250.0));
+                    hostG.pl.pos = stand;  hostG.pl.vel = v2(0, 0);  hostG.pl.protect = 5.0f;
+                    hostIn.mouse[0] = true;
+                    for (int i = 0; i < 240; ++i) {
+                        hostG.pl.pos = stand;  hostG.pl.vel = v2(0, 0);  hostG.pl.protect = 5.0f;
+                        aimAtG(hostG, hostIn, hostG.world.bodies[best].alive ? hostG.world.bodies[best].pos : dv2(0, 0));
+                        step(1);
+                    }
+                    hostIn.mouse[0] = false;
+                    step(90);
+                }
+                int hr, cr, missing, differ; double worst;
+                compareWorlds(hr, cr, missing, differ, worst);
+                printf("      after shooting rocks: host %d rocks, client %d, %d missing, %d differing, worst position error %.1f\n",
+                       hr, cr, missing, differ, worst);
+                check(best >= 0, "there was a rock to shoot");
+                check(missing == 0, "every rock the host has, the client has, and no others");
+                check(differ == 0, "and they are the same shape");
+            }
+
+            // ---- the end of a match: only the host can start the next one
+            {
+                hostG.world.clearZone(A, 700.0);
+                step(20);
+                stage(500.0);
+                hostG.pl.frags = rules::FRAG_LIMIT - 1;
+                hostG.pl.health = 100.0f;
+                if (Game::Peer* c = peerOf(hostG, cliG.pl.id)) c->body.health = 5.0f;
+                hostIn.mouse[0] = true;
+                for (int i = 0; i < 300 && !hostG.match.over; ++i) {
+                    hold();
+                    if (Game::Peer* c = peerOf(hostG, cliG.pl.id)) aimAtG(hostG, hostIn, c->body.pos);
+                    step(1);
+                }
+                hostIn.mouse[0] = false;
+                step(30);
+                check(hostG.match.over && cliG.match.over && cliG.match.winner == hostG.pl.id, "both machines agree the match is over, and who won");
+                const int round = cliG.match.round;
+                const dv2 where = cliG.pl.pos;
+                const int hostFrags = hostG.pl.frags;
+                Input enter;  enter.mousePx = v2(renderer.fbw * 0.5f, renderer.fbh * 0.5f);
+                enter.pressed[VK_RETURN] = true;
+                cliG.update(renderer, enter, dt);                     // the client presses Enter
+                step(20);
+                check(cliG.match.over && cliG.match.round == round && len(cliG.pl.pos - where) < 50.0 && hostG.pl.frags == hostFrags,
+                      "a client pressing Enter does not restart anything: only the host can");
+                while (hostG.match.overTime <= 1.1f) step(1);          // the result stays up a second before Enter counts
+                hostG.update(renderer, enter, dt);                    // the host does
+                step(60);
+                check(!hostG.match.over && !cliG.match.over && cliG.match.round == hostG.match.round && cliG.match.round == round + 1,
+                      "when the host restarts, both are in the new match");
+                Game::Peer* h = peerOf(cliG, hostG.pl.id);
+                check(hostG.pl.frags == 0 && cliG.pl.frags == 0 && h && h->body.frags == 0, "with the scores cleared on every screen");
+            }
+            const double kbps = (double)(hostLink->bytesSent - bytes0) / 1024.0 / std::max(1.0, hostG.net->now - fightStart);
+            printf("      host -> client while fighting: %.1f KB/s   (round trip measured %.0f ms, %d re-sent)\n",
+                   kbps, cliG.net->ep.rel.srtt * 1000.0, (int)hostG.net->clients[0].ep.rel.resent);
+            check(kbps < 60.0, "the host sends under 60 KB/s to a client");
+
+            // ---- leaving
+            cliG.netShutdown();
+            step(30);
+            check(hostG.peers.size() == (size_t)bots, "when the client says goodbye the host drops it at once");
+            if (hostG.peers.size() != (size_t)bots) {
+                int waited = 0;
+                while (hostG.peers.size() != (size_t)bots && waited++ < 60 * 8) { la.advance(dt); hostG.update(renderer, hostIn, dt); }
+                check(hostG.peers.size() == (size_t)bots, "(the goodbye was lost; the host dropped it on the timeout instead)");
+            }
+            hostG.netShutdown();
+            return kbps;
+        };
+
+        scenario("a good connection", 0.0f, 0.0, 0);
+        scenario("a normal one", 0.02f, 0.040, 0);
+        scenario("a poor one", 0.08f, 0.090, 0);
+        scenario("with a bot in the match", 0.02f, 0.040, 1);
+        scenario("a terrible one", 0.20f, 0.150, 0);
+        scenario("over the operating system", 0.0f, 0.0, 0, true);
+
+        // ---- three players: a host and two clients, over one host link
+        {
+            printf("\n  [three players] a host and two clients, 2%% loss, 40 ms one way\n");
+            static Game cli2G;
+            net::LoopLink hostL, c1L, c2L;
+            hostL.targets[0] = &c1L;   hostL.targets[1] = &c2L;
+            c1L.other = &hostL;  c1L.myPeer = 0;
+            c2L.other = &hostL;  c2L.myPeer = 1;
+            hostL.loss = c1L.loss = c2L.loss = 0.02f;
+            hostL.latency = c1L.latency = c2L.latency = 0.040;
+            hostL.rng = 11;  c1L.rng = 22;  c2L.rng = 33;
+            cliG.baseSeed = cli2G.baseSeed = hostG.baseSeed = 0x5EEDFACEull;
+            cliG.startClientOn(renderer, &c1L);
+            cli2G.startClientOn(renderer, &c2L);
+            hostG.startHostOn(renderer, &hostL, 0);
+            hostG.invincible = cliG.invincible = cli2G.invincible = false;
+            Input hIn, aIn, bIn;
+            hIn.mousePx = aIn.mousePx = bIn.mousePx = v2(renderer.fbw * 0.5f, renderer.fbh * 0.5f);
+            auto step = [&](int n) {
+                for (int i = 0; i < n; ++i) {
+                    hostL.advance(dt);  c1L.advance(dt);  c2L.advance(dt);
+                    cliG.update(renderer, aIn, dt);
+                    cli2G.update(renderer, bIn, dt);
+                    hostG.update(renderer, hIn, dt);
+                }
+            };
+            auto peerOf = [](Game& g, int id) -> Game::Peer* {
+                for (Game::Peer& p : g.peers) if (p.body.id == id) return &p;
+                return nullptr;
+            };
+            step(60 * 6);
+            check(cliG.net->welcomed && cli2G.net->welcomed, "both clients are welcomed");
+            check(cliG.pl.id != cli2G.pl.id && cliG.pl.id > 0 && cli2G.pl.id > 0, "with different ids");
+            check(hostG.peers.size() == 2, "the host has both");
+            check(cliG.peers.size() == 2 && cli2G.peers.size() == 2, "and each client knows of the other two players");
+            check(peerOf(cliG, cli2G.pl.id) && peerOf(cli2G, cliG.pl.id), "including one another");
+            check(!peerOf(cliG, cliG.pl.id) && !peerOf(cli2G, cli2G.pl.id), "and never itself");
+            check(std::string(cliG.pl.name) != std::string(cli2G.pl.name), "the two clients have different names");
+
+            auto rocks = [](Game& g) {
+                int n = 0;
+                for (const Body& b : g.world.bodies) if (b.alive) ++n;
+                return n;
+            };
+            int hostRocks = rocks(hostG), r1 = rocks(cliG), r2 = rocks(cli2G);
+            printf("      rocks: host %d, first client %d, second client %d\n", hostRocks, r1, r2);
+            check(r1 == hostRocks && r2 == hostRocks, "both clients were sent the same world");
+
+            // Client one kills client two, watched by all.
+            const dv2 A(0.0, 0.0);
+            hostG.world.clearZone(A, 700.0);
+            step(30);
+            hostG.resetMatch();
+            step(30);
+            Game::Peer* p1 = peerOf(hostG, cliG.pl.id);
+            Game::Peer* p2 = peerOf(hostG, cli2G.pl.id);
+            p1->body.pos = dv2(-250.0, 0.0);  p1->body.vel = v2(0, 0);  p1->body.protect = 0.0f;
+            p2->body.pos = dv2(250.0, 0.0);   p2->body.vel = v2(0, 0);  p2->body.protect = 0.0f;
+            hostG.pl.pos = dv2(0.0, 900.0);   hostG.pl.protect = 5.0f;
+            p2->body.health = 12.0f;
+            step(30);
+            aIn.mouse[0] = true;
+            for (int i = 0; i < 300 && !cli2G.pl.dead; ++i) {
+                p1->body.pos.y = 0.0;  p1->body.vel = v2(0, 0);
+                p2->body.pos.y = 0.0;  p2->body.vel = v2(0, 0);
+                cliG.pl.pos.y = 0.0;   cliG.pl.vel = v2(0, 0);
+                cli2G.pl.pos.y = 0.0;  cli2G.pl.vel = v2(0, 0);
+                if (Game::Peer* t = peerOf(cliG, cli2G.pl.id)) aimAtG(cliG, aIn, t->body.pos);
+                step(1);
+            }
+            aIn.mouse[0] = false;
+            step(45);
+            const int a = cliG.pl.id, b = cli2G.pl.id;
+            auto fragsSeenBy = [&](Game& g, int id) -> int {
+                if (g.pl.id == id) return g.pl.frags;
+                Game::Peer* p = peerOf(g, id);
+                return p ? p->body.frags : -99;
+            };
+            printf("      frags for the first client, as seen by the host / itself / the second: %d / %d / %d\n",
+                   fragsSeenBy(hostG, a), fragsSeenBy(cliG, a), fragsSeenBy(cli2G, a));
+            check(cli2G.pl.dead && cli2G.pl.deaths == 1, "the second client is told it was killed");
+            check(fragsSeenBy(hostG, a) == 1 && fragsSeenBy(cliG, a) == 1 && fragsSeenBy(cli2G, a) == 1,
+                  "the first client's frag is on all three screens");
+            check(fragsSeenBy(hostG, b) == 0 && fragsSeenBy(cliG, b) == 0 && fragsSeenBy(cli2G, b) == 0, "the second client has none, on any");
+            check(!hostG.killFeed.empty() && !cliG.killFeed.empty() && !cli2G.killFeed.empty(), "all three saw the announcement");
+            step(60 * 4);
+            check(!cli2G.pl.dead, "the victim is back");
+            // the third player's shots are seen by the other client, not just the host
+            {
+                size_t seen = 0;
+                hIn.mouse[0] = true;
+                for (int i = 0; i < 90; ++i) {
+                    hostG.pl.protect = 5.0f;
+                    hostG.pl.aim = 0.0f;
+                    step(1);
+                    seen = std::max(seen, cliG.bullets.size() + cli2G.bullets.size());
+                }
+                hIn.mouse[0] = false;
+                check(seen > 3, "shots fired by the host are seen by both clients");
+            }
+            // one client leaving does not disturb the other
+            cliG.netShutdown();
+            step(60);
+            check(hostG.peers.size() == 1 && cli2G.peers.size() == 1, "when one client leaves, the others carry on with one fewer");
+            check(cli2G.net && cli2G.net->welcomed && !cli2G.net->lost, "and the remaining client is still connected");
+            cli2G.netShutdown();
+            hostG.netShutdown();
+        }
+
+        // ---- a client that vanishes is dropped after a timeout
+        {
+            printf("\n  [a client that vanishes]\n");
+            net::LoopLink la, lb;
+            la.other = &lb;  lb.other = &la;
+            cliG.startClientOn(renderer, &lb);
+            hostG.startHostOn(renderer, &la, 0);
+            Input in;  in.mousePx = v2(renderer.fbw * 0.5f, renderer.fbh * 0.5f);
+            for (int i = 0; i < 180; ++i) { la.advance(dt); lb.advance(dt); cliG.update(renderer, in, dt); hostG.update(renderer, in, dt); }
+            check(hostG.peers.size() == 1, "it joined");
+            for (int i = 0; i < 60 * 8; ++i) { la.advance(dt); lb.advance(dt); hostG.update(renderer, in, dt); }   // the client stops answering
+            check(hostG.peers.empty(), "and after a few seconds of silence the host lets it go");
+            hostG.netShutdown();
+            cliG.netShutdown();
+        }
+
+        printf("netgametest: %s\n", failures == 0 ? "PASS" : "FAIL");
         fflush(stdout);
         renderer.shutdown();
         return failures == 0 ? 0 : 1;
@@ -3116,6 +3585,8 @@ int main(int argc, char** argv) {
            (int)(renderer.arenaBytes() / 1024));
     printf("frames over 16ms: %d   over 33ms: %d\n", over16, over33);
     fflush(stdout);
+    if (game.net) printf("network: %s | %d other player(s) | rocks known: %d | you: %d frags, %d deaths\n", game.netStatus().c_str(), (int)game.peers.size(), game.world.liveCount, game.pl.frags, game.pl.deaths);
+    game.netShutdown();
     audio::shutdown();
     renderer.shutdown();
     wglMakeCurrent(nullptr, nullptr);

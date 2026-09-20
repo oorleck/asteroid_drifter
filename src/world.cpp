@@ -331,6 +331,7 @@ void World::loadChunk(i64 cx, i64 cy) {
             b.alive  = true;
             b.authored = true;
             finalizeBody(slot, false);
+            if (journal && bodies[slot].alive) { assignNetId(slot); fullSync.push_back(bodies[slot].netId); }
         }
         saved.erase(it);
         return;
@@ -886,4 +887,17 @@ bool World::summariesClose(const FieldSummary& a, const FieldSummary& b) {
     const uint32_t slack = std::max<uint32_t>(6, hi / 80);              // a few samples, or ~1.25%
     if (hi - lo > slack) return false;
     return std::abs((int)a.cx - (int)b.cx) <= 8 && std::abs((int)a.cy - (int)b.cy) <= 8;   // 1 unit
+}
+
+void World::refreshIndex(dv2 focus) {
+    liveCount = (int)bodies.size() - (int)freeSlots.size();
+    active.clear();
+    maxBodyRadius = 64.0;
+    for (size_t i = 0; i < bodies.size(); ++i) {
+        const Body& b = bodies[i];
+        if (!b.alive) continue;
+        active.push_back((int)i);
+        if (b.radius > maxBodyRadius) maxBodyRadius = b.radius;
+    }
+    grid.build(*this, focus, cfg::SIM_RADIUS + 3000.0);
 }

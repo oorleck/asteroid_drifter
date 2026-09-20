@@ -52,6 +52,10 @@ enum class Msg : uint8_t {
     Shot,           //                 someone fired
     Hit,            //                 someone was hit
     Bye,
+    PlayerInfo,     // host -> client: player N is called this and is this colour
+    PlayerLeft,     //                 player N has gone
+    Kill,           //                 who killed whom, and where, for the announcement and the bang
+    Reject,         //                 you cannot join (full, wrong version)
 };
 
 // ---------------------------------------------------------------- packing --
@@ -126,7 +130,8 @@ struct Link {
 // tested against an unkind network without needing one.
 struct LoopLink : Link {
     struct Pending { std::vector<uint8_t> data; int peer; double due; };
-    LoopLink* other = nullptr;
+    LoopLink* other = nullptr;                   // the far end of a simple pair
+    LoopLink* targets[MAX_PLAYERS] = {};         // a host link serving several clients: where each peer number goes
     std::vector<Pending> queue;      // what has been handed to *this* link to deliver
     double now = 0, latency = 0;
     float  loss = 0;
@@ -164,7 +169,7 @@ private:
 // does that: number every message, repeat what has not been acknowledged, and
 // hold anything that arrives early until the gap in front of it is filled.
 struct Reliable {
-    struct Out { uint32_t seq; std::vector<uint8_t> payload; double sentAt; int tries; };
+    struct Out { uint32_t seq; std::vector<uint8_t> payload; double sentAt; int tries; bool sacked = false; };
     std::vector<Out> outbox;
     uint32_t nextSeq = 1, ackedThrough = 0;
 
@@ -176,6 +181,7 @@ struct Reliable {
     // much is already in flight. Without it a burst (the whole field on joining, a repair)
     // overflows the receiver's socket buffer or a router queue, and is mostly lost.
     size_t bytesPerFlush = 14000, maxInFlight = 48000;
+    int    maxMessagesInFlight = 60;   // the selective-ack window is 64 wide, so stay inside it
     double resendAfter = 0.25;         // adapts to the measured round trip (see ack)
     double srtt = 0;                   // smoothed round-trip time, 0 until measured
     uint64_t resent = 0;               // messages sent more than once
@@ -186,7 +192,10 @@ struct Reliable {
     void collect(double now, std::vector<std::vector<uint8_t>>& out, size_t byteBudget = ~(size_t)0);
     // Takes a numbered message off the wire; returns the ones now ready, in order.
     void accept(uint32_t seq, const uint8_t* d, size_t n, std::vector<std::vector<uint8_t>>& ready);
-    void ack(uint32_t through);
+    // `through` is the last message the peer has received in order; bit i of `sack` says it also has
+    // message through + 2 + i (through + 1 is the one it is missing).
+    void ack(uint32_t through, uint64_t sack = 0);
+    uint64_t sackBits() const;         // what we hold that arrived out of order, to tell the peer
     void rttSample(double seconds);   // from timestamps echoed in packets, so resends cannot confuse it
     size_t pending() const { return outbox.size(); }
 };
@@ -196,7 +205,7 @@ struct Reliable {
 // lossy ones on their own, and piggybacks a cumulative acknowledgement on every
 // packet so there is no separate ack traffic to speak of.
 //
-//   packet := kind:u8  ack:u32  stamp:u16  echo:u16  hold:u16  body
+//   packet := kind:u8  ack:u32  sack:u64  stamp:u16  echo:u16  hold:u16  body
 //   kind 0 = nothing but the ack
 //   kind 1 = reliable batch:  { len:u16  seq:u32  payload }...
 //   kind 2 = one unreliable message
@@ -213,7 +222,8 @@ struct Endpoint {
     void sendUnreliable(const std::vector<uint8_t>& payload);
     void flush(double now);       // sends new and overdue reliable messages, and an ack
     double now = 0;               // as of the last flush; lets poll() time acknowledgements
-    void poll(double t);          // reads everything waiting
+    void poll(double t);          // reads everything waiting on the link
+    void feed(const Packet& p, double t);   // handles one packet: for a host, where one link serves many endpoints
     bool wantsAck = false;
     // Timestamps ride on every packet: our clock in ms, the last one we heard from
     // the peer, and how long we sat on it. That gives a clean round trip whatever
@@ -246,6 +256,11 @@ struct HostReplicator {
     // What a client needs to know about rocks that already exist when it joins: a
     // fresh rock is named by radius and seed; one that has been shot is sent whole.
     void collectInitial(std::vector<std::vector<uint8_t>>& reliableOut);
+    // A host serving several clients has one HostReplicator per client (each remembers what
+    // *that* client believes) but only one of them, the master, drains the journal.
+    void attach(World& world) { w = &world; }
+    // Rocks that came back from a saved chunk have no history to replay: send them whole.
+    void collectFullSyncs(std::vector<std::vector<uint8_t>>& reliableOut);
     // Everything a rock's position needs, for the rocks whose guess has gone stale.
     void collectMotion(double now, std::vector<uint8_t>& unreliableOut);
     void collectAudit(double now, std::vector<uint8_t>& reliableOut);

@@ -157,7 +157,7 @@ void Game::damagePlayer(Player& p, float dmg, v2 kick, int attacker) {
         if (&p == &pl) hurtPlayer(dmg, kick, attacker);
         return;
     }
-    if (p.dead || match.over || dmg <= 0.0f) return;
+    if (netClient || p.dead || match.over || dmg <= 0.0f) return;     // a client never decides damage
     if (p.protect > 0.0f) return;                 // just arrived: nothing touches them yet
     const bool self = &p == &pl;
     p.vel += kick;
@@ -175,6 +175,26 @@ void Game::damagePlayer(Player& p, float dmg, v2 kick, int attacker) {
     if (p.health <= 0.0f) playerDied(p, attacker);
 }
 
+// What everyone sees when someone dies: the line in the feed, the bang, the sound.
+// A client runs this too, when the host says so; only the host scores.
+void Game::killEffects(int killer, int victim, dv2 at) {
+    const Player* v = playerById(victim);
+    const Player* k = playerById(killer);
+    char buf[64];
+    const char* vn = v ? v->name : "?";
+    if (k && k != v) {
+        snprintf(buf, sizeof buf, "%s  >  %s", k->name, vn);
+        addKillMsg(buf, k->tint);
+    } else {
+        snprintf(buf, sizeof buf, "%s  FELL", vn);
+        addKillMsg(buf, v ? v->tint : pal::HUD);
+    }
+    const Col c = v ? v->tint : pal::HUD;
+    boom(at, 46.0f, c);
+    spawnSparks(at, v ? v->vel : v2(0, 0), 70, 420.0f, mix(c, Col(1, 1, 1), 0.4f), 1.2f);
+    if (v && v == &pl) { shake = 1.0f; sfxUI(Sfx::Death, 0.9f); }
+}
+
 void Game::playerDied(Player& victim, int killer) {
     if (victim.dead) return;
     victim.dead = true;
@@ -184,20 +204,10 @@ void Game::playerDied(Player& victim, int killer) {
     ++victim.deaths;
 
     Player* k = playerById(killer);
-    char buf[64];
-    if (k && k != &victim) {
-        ++k->frags;
-        snprintf(buf, sizeof buf, "%s  >  %s", k->name, victim.name);
-        addKillMsg(buf, k->tint);
-    } else {
-        victim.frags = std::max(0, victim.frags - 1);          // a suicide costs a frag
-        snprintf(buf, sizeof buf, "%s  FELL", victim.name);
-        addKillMsg(buf, victim.tint);
-    }
-
-    boom(victim.pos, 46.0f, victim.tint);
-    spawnSparks(victim.pos, victim.vel, 70, 420.0f, mix(victim.tint, Col(1, 1, 1), 0.4f), 1.2f);
-    if (&victim == &pl) { shake = 1.0f; sfxUI(Sfx::Death, 0.9f); }
+    if (k && k != &victim) ++k->frags;
+    else                   victim.frags = std::max(0, victim.frags - 1);          // a suicide costs a frag
+    killEffects(killer, victim.id, victim.pos);
+    netKilled(killer, victim.id, victim.pos);
 
     if (k && k != &victim && k->frags >= rules::FRAG_LIMIT && !match.over) {
         match.over = true;
@@ -208,7 +218,7 @@ void Game::playerDied(Player& victim, int killer) {
 }
 
 bool Game::bulletHitsPlayers(Bullet& b) {
-    if (match.over) return false;
+    if (match.over || netClient) return false;                // a client only draws: the host decides who was hit
     bool hit = false;
     eachPlayer([&](Player& p) {
         if (hit || p.dead || p.id == b.owner) return;
@@ -293,13 +303,15 @@ void Game::botThink(Peer& b, float dt) {
 
 // -------------------------------------------------------------------- update --
 void Game::updateVersus(float dt) {
-    if (match.over) {
-        match.overTime += dt;
-        if (match.overTime > rules::VS_MATCH_OVER && !netClient) resetMatch();
-    }
     for (KillMsg& k : killFeed) k.ttl -= dt;
     killFeed.erase(std::remove_if(killFeed.begin(), killFeed.end(), [](const KillMsg& k) { return k.ttl <= 0.0f; }),
                    killFeed.end());
+    if (netClient) return;             // everything below is the host's job: a client is told the result
+
+    if (match.over) {
+        match.overTime += dt;
+        if (match.overTime > rules::VS_MATCH_OVER) resetMatch();
+    }
 
     // The opponents. Bots think; a human's command has already arrived by other means.
     for (Peer& pe : peers) {
@@ -336,6 +348,13 @@ void Game::drawVersusHud(Renderer& r) {
         r.text(v2(W * 0.5f - r.textWidth(h, txt) * 0.5f, y), h, txt, c, inten);
     };
     char buf[96];
+
+    // ---- the connection, top left
+    if (net) {
+        const std::string st = netStatus();
+        const bool bad = netClient && (!netConnected());
+        r.text(v2(m, 158.0f * s), 10.0f * s, st.c_str(), bad ? pal::WARN : Col(0.55f, 0.85f, 0.9f), bad ? 2.0f : 1.3f);
+    }
 
     // ---- the scoreboard, top centre
     static std::vector<const Player*> order;
@@ -393,6 +412,6 @@ void Game::drawVersusHud(Renderer& r) {
         centred(buf, 56.0f * s, H * 0.34f, w ? w->tint : pal::HUD, 2.5f);
         snprintf(buf, sizeof buf, "NEW MATCH IN %d", (int)std::ceil(std::max(0.0f, rules::VS_MATCH_OVER - match.overTime)));
         centred(buf, 15.0f * s, H * 0.34f + 40.0f * s, pal::HUD, 1.7f);
-        if (match.overTime > 1.0f) centred("PRESS ENTER TO START NOW", 12.0f * s, H * 0.34f + 64.0f * s, Col(1, 1, 1), 1.5f);
+        if (match.overTime > 1.0f) centred(netClient ? "WAITING FOR THE HOST" : "PRESS ENTER TO START NOW", 12.0f * s, H * 0.34f + 64.0f * s, Col(1, 1, 1), 1.5f);
     }
 }
