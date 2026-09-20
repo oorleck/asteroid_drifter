@@ -138,6 +138,19 @@ namespace rules {
     static const int   NUKE_MAX       = 9;
     static const float NUKE_R_BODY    = 7.0f;     // collision radius of the grenade
 
+
+    // ---- versus mode -----------------------------------------------------------
+    static const float ARENA_RADIUS     = 2000.0f;  // beyond this a wall pushes you back
+    static const float ARENA_PUSH       = 1500.0f;  // inward acceleration, per 500 units outside
+    static const int   FRAG_LIMIT       = 10;       // first to this many wins
+    static const float RESPAWN_TIME     = 3.0f;
+    static const float SPAWN_PROTECT    = 2.0f;
+    static const float SPAWN_APART      = 700.0f;   // try not to appear this close to anyone
+    static const float VS_RIFLE_DAMAGE  = 5.0f;     // a rifle round to the suit
+    static const float VS_HEAVY_DAMAGE  = 42.0f;    // a shell that hits directly
+    static const float VS_HEAVY_SPLASH  = 30.0f;    // and what its blast does at the centre
+    static const float VS_HIT_KICK      = 26.0f;    // shove from a rifle round
+    static const float VS_MATCH_OVER    = 8.0f;     // seconds the result stays up before a new match
     // ---- the shop ----------------------------------------------------------
     static const int   PRICE_HOMING   = 300;      // unlocks the homing shell
     static const int   PRICE_SALVO    = 450;      // unlocks the salvo, with a first load

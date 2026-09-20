@@ -33,6 +33,23 @@ struct Input {
 namespace tune {
     static const float BULLET_GRAV = 9.0f;
     static const float HEAVY_GRAV  = 10.0f;
+    static const float PLAYER_R    = 6.5f;
+    static const float WALK_SPEED  = 0.0f;
+    static const float WALK_ACCEL  = 1500.0f;
+    static const float AIR_ACCEL   = 0.0f;
+    static const float JUMP_SPEED  = 260.0f;
+    static const float THRUST      = 750.0f;
+    static const float FUEL_BURN   = 25.0f;
+    static const float FUEL_REGEN  = 22.0f;
+    static const float FUEL_RESTART = 12.0f;   // after running dry, fuel needed before the rocket relights
+    static const float BULLET_V    = 1650.0f;
+    static const float BULLET_CAL  = 5.2f;
+    static const float BULLET_PEN  = 10.0f;    // world units of solid rock a shot can chew through
+    static const float FIRE_RATE   = 0.085f;
+    static const float HEAVY_V     = 700.0f;
+    static const float HEAVY_CAL   = 21.0f;
+    static const float HEAVY_PEN   = 50.0f;
+    static const float HEAVY_RATE  = 1.4f;
 }
 
 // Palette for the level / enemy layer. Colours are deliberately over 1.0 so the
@@ -59,6 +76,7 @@ struct Bullet {
     float budget = 0;              // how much solid rock it can still chew through
     float caliber = 5.0f;
     float gravScale = 1.0f;        // multiplier on the pull of nearby rock
+    int   owner = -1;              // who fired it: a player id, or -1 for none (versus mode scores by this)
     bool  heavy = false;
     bool  homing = false;          // the homing shell steers onto an enemy
     int   targetId = 0;
@@ -73,6 +91,19 @@ struct Particle {
     float ang = 0, angVel = 0;
     Col   col;
     int   kind = 0;                // 0 spark, 1 tumbling chunk, 2 smoke ring
+};
+
+// Everything a player can ask for in one frame, and nothing else. The local
+// player's keyboard and mouse are boiled down to this, a bot writes one, and in a
+// network game a client sends one to the host every frame. Actions that happen
+// once (a jump, a shell) are *counted* rather than flagged, so a lost packet
+// cannot swallow one: the host acts whenever the count has moved.
+struct PlayerCmd {
+    float   aim = 0;                 // world-space angle the rifle points along
+    float   move = 0;                // -1..1 along the surface
+    bool    thrust = false;          // the rocket, which pushes toward the aim
+    bool    fire = false;            // the rifle, held
+    uint8_t jumpSeq = 0, heavySeq = 0;
 };
 
 struct Player {
@@ -105,6 +136,16 @@ struct Player {
     float shield = 0;              // its charge, spent on whatever it stops
     bool  shieldUp = false;        // raised this frame
     float shieldFlash = 0;         // brightens when it takes a hit
+
+    // ---- versus mode
+    int   id = 0;                  // the same on every machine: 0 is the host
+    char  name[16] = "PILOT";
+    Col   tint = Col(0.85f, 0.95f, 1.00f);
+    bool  dead = false;
+    float respawnIn = 0;           // seconds until it comes back
+    float protect = 0;             // spawn protection: damage is ignored while this runs
+    int   frags = 0, deaths = 0;
+    uint8_t seenJump = 0, seenHeavy = 0;     // the last counts acted on
 };
 
 // ------------------------------------------------------------ level layer --
@@ -327,8 +368,8 @@ struct Game {
     void startRun(Renderer& r);
     void startLevel(int number, bool retry = false);
     void retryLevel(Renderer& r);        // after a lost life: the same level again, from the start
-    bool playerGone() const { return state == State::Dead || state == State::GameOver; }
-    void hurtPlayer(float dmg, v2 kick = v2(0, 0));
+    bool playerGone() const { return state == State::Dead || state == State::GameOver || (versus && pl.dead); }
+    void hurtPlayer(float dmg, v2 kick = v2(0, 0), int attacker = -1);
     void killPlayer(const char* reason);
     void say(const char* text);
     void earn(int amount);
@@ -376,8 +417,6 @@ struct Game {
     void updateParticles(float dt);
     void drainWorldEvents();
     void spawnSparks(dv2 p, v2 base, int n, float speed, Col c, float life);
-    void fire(bool heavy);
-    void drawPlayer(Renderer& r);
     void drawHud(Renderer& r);
     void drawStars(Renderer& r);
 
@@ -435,6 +474,44 @@ struct Game {
     void  drawShips(Renderer& r);
     void  drawShipHud(Renderer& r);
     void  drawWeaponMount(Renderer& r, const Enemy& e);
+
+    // ---- versus (versus.cpp)
+    // The local player is always `pl`, so everything written for one player keeps
+    // working. Everyone else is a Peer: a bot here, or a human across the network.
+    struct Peer {
+        Player  body;
+        PlayerCmd cmd;
+        bool    bot = false;
+        float   botClock = 0, botBurst = 0, botAimErr = 0, botStrafe = 1, botJumpCd = 0;
+        int     netPeer = -1;          // which connection it is, for humans on the wire
+    };
+    bool    versus = false;
+    bool    netClient = false;         // a client does not decide matches: the host does
+    std::vector<Peer> peers;
+    PlayerCmd localCmd;                // the local player's command, kept between frames for its counters
+    Rng     vsRng{0x5EED};             // spawn choices; only the host uses it
+    struct KillMsg { char text[64]; float ttl; Col col; };
+    std::vector<KillMsg> killFeed;
+    struct Match { bool over = false; int winner = -1; float overTime = 0; int round = 1; } match;
+    int     explodeOwner = -1;         // who a blast in progress belongs to, so its kills are credited
+    int     vsShots = 0, vsHits = 0;   // rounds fired, and rounds that landed on a player (diagnostics)
+
+    void startVersus(Renderer& r, int bots);
+    void updateVersus(float dt);
+    void stepPlayer(Player& p, const PlayerCmd& c, float dt);
+    void fire(Player& p, bool heavy);
+    void damagePlayer(Player& p, float dmg, v2 kick, int attacker);   // any player, versus rules
+    void playerDied(Player& victim, int killer);
+    void respawnPlayer(Player& p);
+    bool standOnRock(int slot, Player& p);
+    bool bulletHitsPlayers(Bullet& b);
+    void botThink(Peer& b, float dt);
+    Player* playerById(int id);
+    template <class F> void eachPlayer(F f) { f(pl); for (Peer& p : peers) f(p.body); }
+    void resetMatch();
+    void addKillMsg(const char* text, Col c);
+    void drawVersusHud(Renderer& r);
+    void drawPlayerFig(Renderer& r, const Player& p);
 
     // ---- sound (audio_game.cpp)
     void sfx(Sfx s, dv2 at, float vol = 1.0f, float pitch = 1.0f, float range = 1600.0f, float delay = 0.0f);

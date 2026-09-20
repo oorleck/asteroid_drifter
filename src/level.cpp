@@ -215,8 +215,13 @@ void Game::retryLevel(Renderer& r) {
     sfxUI(Sfx::Respawn);
 }
 
-void Game::hurtPlayer(float dmg, v2 kick) {
+void Game::hurtPlayer(float dmg, v2 kick, int attacker) {
     if (state != State::Playing) return;
+    if (versus) {                               // a match has its own rules: see damagePlayer
+        if (pl.dead || match.over) return;
+        damagePlayer(pl, dmg, kick, attacker);
+        return;
+    }
     damageTaken += dmg;
     pl.vel += kick;
     pl.sinceHurt = 0.0f;

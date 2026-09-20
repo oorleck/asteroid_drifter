@@ -2,25 +2,6 @@
 #include <cstdio>
 #include <cstring>
 
-namespace tune {
-    static const float PLAYER_R    = 6.5f;
-    static const float WALK_SPEED  = 0.0f;
-    static const float WALK_ACCEL  = 1500.0f;
-    static const float AIR_ACCEL   = 0.0f;
-    static const float JUMP_SPEED  = 260.0f;
-    static const float THRUST      = 750.0f;
-    static const float FUEL_BURN   = 25.0f;
-    static const float FUEL_REGEN  = 22.0f;
-    static const float FUEL_RESTART = 12.0f;   // after running dry, fuel needed before the rocket relights
-    static const float BULLET_V    = 1650.0f;
-    static const float BULLET_CAL  = 5.2f;
-    static const float BULLET_PEN  = 10.0f;    // world units of solid rock a shot can chew through
-    static const float FIRE_RATE   = 0.085f;
-    static const float HEAVY_V     = 700.0f;
-    static const float HEAVY_CAL   = 21.0f;
-    static const float HEAVY_PEN   = 50.0f;
-    static const float HEAVY_RATE  = 1.4f;
-}
 
 static const Col C_PLAYER (0.85f, 0.95f, 1.00f);
 static const Col C_VISOR  (0.35f, 0.95f, 1.00f);
@@ -158,7 +139,7 @@ void Game::updateBullets(float dt) {
         for (int s = 0; s < steps && !spent; ++s) {
             b.pos.x += (double)b.vel.x * sdt;
             b.pos.y += (double)b.vel.y * sdt;
-            if (bulletHitsTargets(b)) { spent = true; break; }
+            if (bulletHitsTargets(b) || (versus && bulletHitsPlayers(b))) { spent = true; break; }
             const int hit = world.solidAt(b.pos);
             if (hit < 0) continue;
 
@@ -184,7 +165,8 @@ void Game::updateBullets(float dt) {
                 if (b.heavy) {
                     shake = std::max(shake, 0.6f);
                     // A shell going off in the rock still shreds anything nearby.
-                    explode(b.pos, rules::HEAVY_SPLASH_R, rules::HEAVY_SPLASH, 0, 0, 0, false);
+                    explodeOwner = b.owner;
+                    explode(b.pos, rules::HEAVY_SPLASH_R, rules::HEAVY_SPLASH, versus ? rules::VS_HEAVY_SPLASH : 0.0f, 0, 0, false);
                 }
                 spent = true;
             }
@@ -195,30 +177,38 @@ void Game::updateBullets(float dt) {
     bullets.resize(w);
 }
 
-void Game::fire(bool heavy) {
-    const v2 dir = fromAngle(pl.aim);
+void Game::fire(Player& p, bool heavy) {
+    const bool self = &p == &pl;
+    const v2 dir = fromAngle(p.aim);
     const v2 d2  = rot(dir, rng.sym(heavy ? 0.004f : 0.017f));
     Bullet b;
-    b.pos     = dv2(pl.pos.x + dir.x * 15.0, pl.pos.y + dir.y * 15.0);
-    b.vel     = d2 * (heavy ? tune::HEAVY_V : tune::BULLET_V) + pl.vel;
+    b.pos     = dv2(p.pos.x + dir.x * 15.0, p.pos.y + dir.y * 15.0);
+    b.vel     = d2 * (heavy ? tune::HEAVY_V : tune::BULLET_V) + p.vel;
     b.caliber = heavy ? tune::HEAVY_CAL : tune::BULLET_CAL;
     b.gravScale = heavy ? tune::HEAVY_GRAV : tune::BULLET_GRAV;
     b.budget  = heavy ? tune::HEAVY_PEN : tune::BULLET_PEN;
     b.life    = heavy ? 4.5f : 2.6f;
     b.heavy   = heavy;
     b.homing  = heavy;              // the charge shot is the homing shell
+    b.owner   = p.id;
     b.col     = heavy ? C_HEAVY : C_BULLET;
+    if (versus) b.col = mix(b.col, p.tint, 0.55f);     // so you can tell whose shot it is
     bullets.push_back(b);
+    if (versus) ++vsShots;
 
-    pl.vel -= d2 * (heavy ? 145.0f : 6.0f);
-    shake = std::max(shake, heavy ? 0.5f : 0.07f);
-    ++shotsFired;
-    sfx(heavy ? Sfx::Shell : Sfx::Rifle, pl.pos, heavy ? 1.0f : 0.8f, heavy ? 1.0f : sfxRng.range(0.93f, 1.08f));
+    p.vel -= d2 * (heavy ? 145.0f : 6.0f);
+    if (self) shake = std::max(shake, heavy ? 0.5f : 0.07f);
+    if (self) ++shotsFired;
+    sfx(heavy ? Sfx::Shell : Sfx::Rifle, p.pos, self ? (heavy ? 1.0f : 0.8f) : (heavy ? 0.9f : 0.6f),
+        heavy ? 1.0f : sfxRng.range(0.93f, 1.08f));
     spawnSparks(b.pos, d2 * (heavy ? 90.0f : 40.0f), heavy ? 10 : 3,
                 heavy ? 150.0f : 80.0f, b.col, 0.16f);
 }
 
 // ------------------------------------------------------------------ player --
+// The local player's keyboard and mouse, boiled down to a PlayerCmd, plus the
+// things only a single-player run has (the force field, the blast shield, the
+// nuke and the salvo). The physics is in stepPlayer, which anyone can be run through.
 void Game::updatePlayer(Renderer& r, const Input& in, float dt) {
     // Aim follows the cursor through the same projection the world uses.
     const float nx =  (in.mousePx.x / (float)r.fbw - 0.5f) * 2.0f * cam.halfW;
@@ -229,7 +219,6 @@ void Game::updatePlayer(Renderer& r, const Input& in, float dt) {
     v2 aimDir = norm(v2((float)(cam.pos.x + off.x - pl.pos.x),
                         (float)(cam.pos.y + off.y - pl.pos.y)));
     if (len2(aimDir) < 0.25f) aimDir = fromAngle(pl.aim);
-    pl.aim = std::atan2(aimDir.y, aimDir.x);
 
     // ---- force field (only once bought): X switches it on and off
     if (in.pressed['X'] && pl.hasField) {
@@ -237,101 +226,127 @@ void Game::updatePlayer(Renderer& r, const Input& in, float dt) {
         else if (!pl.fieldLocked && pl.field > 5.0f)          { pl.fieldOn = true; sfxUI(Sfx::FieldOn, 0.9f); }
     }
 
-    int dom = -1;
-    v2 g = world.gravityAt(pl.pos, 2600.0, &dom);
-    if (floating) g = v2(0, 0);                               // test hook
-
-    // ---- rocket
-    // Right mouse (or Shift) is the rocket. Left Alt holds the blast shield up, once bought.
-    const bool wantThrust = in.mouse[1] || in.down[VK_SHIFT];
+    // ---- the blast shield: Left Alt holds it up, once bought
     pl.shieldUp = pl.hasShield && pl.shield > 0.0f && in.down[VK_LMENU] && state == State::Playing;
     pl.shieldFlash = approach(pl.shieldFlash, 0.0f, 7.0f, dt);
     if (pl.shieldUp && !prevShieldUp) sfxUI(Sfx::ShieldUp, 0.9f);
     prevShieldUp = pl.shieldUp;
+
+    // ---- everything else becomes a command
+    PlayerCmd& c = localCmd;
+    c.aim    = std::atan2(aimDir.y, aimDir.x);
+    c.thrust = in.mouse[1] || in.down[VK_SHIFT];             // right mouse (or Shift) is the rocket
+    c.fire   = in.mouse[0];
+    c.move   = 0;
+    if (in.down['A'] || in.down[VK_LEFT])  c.move -= 1.0f;
+    if (in.down['D'] || in.down[VK_RIGHT]) c.move += 1.0f;
+    if (in.pressed[VK_SPACE] || in.pressed['W'] || in.pressed[VK_UP]) ++c.jumpSeq;
+    // The charge shot has to be bought: it is the homing shell.
+    if (in.pressed['F'] || in.mousePressed[2]) ++c.heavySeq;
+
+    stepPlayer(pl, c, dt);
+
+    pl.nukeCd  -= dt;
+    pl.salvoCd -= dt;
+    if (in.pressed['N']) throwNuke(aimDir);
+    if (in.pressed['G']) fireSalvo(aimDir);
+}
+
+// One frame of one player's life: rocket, gravity, contact with rock, walking,
+// jumping, healing and weapons. Written for anybody, so the same code moves the
+// local player, a bot, and (on the host) a human on the far end of a connection.
+void Game::stepPlayer(Player& p, const PlayerCmd& c, float dt) {
+    const bool self = &p == &pl;
+    p.aim = c.aim;
+    const v2 aimDir = fromAngle(p.aim);
+    const bool playing = state == State::Playing;
+
+    v2 g = world.gravityAt(p.pos, 2600.0);
+    if (floating && self) g = v2(0, 0);                       // test hook
+
+    // ---- rocket
     // Once the tank runs dry the rocket stays off until it has recovered a bit.
     // Without this, the sliver of fuel regenerated on the frame the rocket cut
     // out would re-enable it on the next one, and an empty tank would still
     // thrust every other frame.
-    if (pl.fuel <= 0.0f)                    pl.fuelLocked = true;
-    else if (pl.fuel >= tune::FUEL_RESTART) pl.fuelLocked = false;
-    pl.thrusting = wantThrust && !pl.fuelLocked && pl.fuel > 0.0f;
-    if (wantThrust && !pl.thrusting && state == State::Playing) sfxUI(Sfx::FuelEmpty, 0.8f);   // the dry click
-    if (pl.thrusting) {
-        pl.vel += aimDir * (tune::THRUST * dt);
-        pl.fuel = std::max(0.0f, pl.fuel - tune::FUEL_BURN * dt);
-        pl.thrustGlow = 1.0f;
+    if (p.fuel <= 0.0f)                    p.fuelLocked = true;
+    else if (p.fuel >= tune::FUEL_RESTART) p.fuelLocked = false;
+    p.thrusting = c.thrust && !p.fuelLocked && p.fuel > 0.0f;
+    if (self && c.thrust && !p.thrusting && playing) sfxUI(Sfx::FuelEmpty, 0.8f);   // the dry click
+    if (p.thrusting) {
+        p.vel += aimDir * (tune::THRUST * dt);
+        p.fuel = std::max(0.0f, p.fuel - tune::FUEL_BURN * dt);
+        p.thrustGlow = 1.0f;
         if (rng.f() < dt * 90.0f)
-            spawnSparks(dv2(pl.pos.x - aimDir.x * 10, pl.pos.y - aimDir.y * 10),
-                        pl.vel - aimDir * 260.0f, 2, 90.0f, C_FLAME, 0.30f);
+            spawnSparks(dv2(p.pos.x - aimDir.x * 10, p.pos.y - aimDir.y * 10),
+                        p.vel - aimDir * 260.0f, 2, 90.0f, C_FLAME, 0.30f);
     } else {
-        pl.fuel = std::min(100.0f, pl.fuel + tune::FUEL_REGEN * dt);
+        p.fuel = std::min(100.0f, p.fuel + tune::FUEL_REGEN * dt);
     }
-    pl.thrustGlow = approach(pl.thrustGlow, 0.0f, 9.0f, dt);
-    pl.hurtGlow   = approach(pl.hurtGlow, 0.0f, 3.0f, dt);
+    p.thrustGlow = approach(p.thrustGlow, 0.0f, 9.0f, dt);
+    p.hurtGlow   = approach(p.hurtGlow, 0.0f, 3.0f, dt);
+    p.protect    = std::max(0.0f, p.protect - dt);
 
-    float mv = 0;
-    if (in.down['A'] || in.down[VK_LEFT])  mv -= 1.0f;
-    if (in.down['D'] || in.down[VK_RIGHT]) mv += 1.0f;
-
-    pl.vel += g * dt;
+    const float mv = c.move;
+    p.vel += g * dt;
 
     // ---- integrate, substepped so we never tunnel through thin rock
-    const float speed = len(pl.vel);
+    const float speed = len(p.vel);
     const int   steps = std::max(1, std::min(10, (int)(speed * dt / 3.0f) + 1));
     const float sdt   = dt / steps;
-    const bool  wasGrounded = pl.grounded;
+    const bool  wasGrounded = p.grounded;
     float landImpact = 0.0f;
-    pl.grounded = false;
+    p.grounded = false;
     for (int s = 0; s < steps; ++s) {
-        pl.pos.x += (double)pl.vel.x * sdt;
-        pl.pos.y += (double)pl.vel.y * sdt;
+        p.pos.x += (double)p.vel.x * sdt;
+        p.pos.y += (double)p.vel.y * sdt;
 
         v2 n; float depth;
-        const int hit = world.probe(pl.pos, tune::PLAYER_R + 2.0f, &n, &depth);
+        const int hit = world.probe(p.pos, tune::PLAYER_R + 2.0f, &n, &depth);
         if (hit < 0) continue;
         Body& b = world.bodies[hit];
-        const v2 rvec = tov2(pl.pos - b.pos);
+        const v2 rvec = tov2(p.pos - b.pos);
         const v2 surf = b.velAt(rvec);
         const float pen = depth - 2.0f;
-        if (pen > 0) { pl.pos.x += n.x * pen; pl.pos.y += n.y * pen; }
+        if (pen > 0) { p.pos.x += n.x * pen; p.pos.y += n.y * pen; }
 
-        v2 rel = pl.vel - surf;
+        v2 rel = p.vel - surf;
         const float vn = dot(rel, n);
         if (vn < 0) {
             const float impact = -vn;
             if (!wasGrounded) landImpact = std::max(landImpact, impact);
             rel -= n * vn;
             if (impact > 300.0f && !wasGrounded) {
-                hurtPlayer((impact - 300.0f) * 0.06f);
-                spawnSparks(pl.pos, n * 60.0f, 10, 130.0f, C_WARN, 0.4f);
+                damagePlayer(p, (impact - 300.0f) * 0.06f, v2(0, 0), -1);
+                spawnSparks(p.pos, n * 60.0f, 10, 130.0f, C_WARN, 0.4f);
             }
         }
-        pl.vel = rel + surf;
-        pl.grounded = true;
-        pl.up = n;
-        pl.ground = world.ref(hit);
+        p.vel = rel + surf;
+        p.grounded = true;
+        p.up = n;
+        p.ground = world.ref(hit);
     }
 
-    if (landImpact > 70.0f && pl.grounded) sfx(Sfx::Land, pl.pos, clampf(landImpact / 260.0f, 0.3f, 1.0f), sfxRng.range(0.9f, 1.1f));
+    if (landImpact > 70.0f && p.grounded) sfx(Sfx::Land, p.pos, clampf(landImpact / 260.0f, 0.3f, 1.0f), sfxRng.range(0.9f, 1.1f));
 
     // ---- local up: surface normal on the ground, gravity vector in flight
-    if (!pl.grounded) {
+    if (!p.grounded) {
         if (len2(g) > 400.0f)
-            pl.up = norm(lerp(pl.up, norm(g) * -1.0f, clampf(6.0f * dt, 0.0f, 1.0f)));
-        pl.coyote -= dt;
+            p.up = norm(lerp(p.up, norm(g) * -1.0f, clampf(6.0f * dt, 0.0f, 1.0f)));
+        p.coyote -= dt;
     } else {
-        pl.coyote = 0.12f;
+        p.coyote = 0.12f;
     }
 
     // ---- walking / air control
     // "Right" for the spaceman is 90 degrees clockwise from his up. That is what
     // ends up on the right of the screen once the POV camera has rolled up to
     // screen-up. (perp() rotates the other way, which made D walk left.)
-    const v2 right = v2(pl.up.y, -pl.up.x);
-    if (pl.grounded) {
-        Body* gb = world.get(pl.ground);
-        const v2 surf = gb ? gb->velAt(tov2(pl.pos - gb->pos)) : v2(0, 0);
-        v2 rel = pl.vel - surf;
+    const v2 right = v2(p.up.y, -p.up.x);
+    if (p.grounded) {
+        Body* gb = world.get(p.ground);
+        const v2 surf = gb ? gb->velAt(tov2(p.pos - gb->pos)) : v2(0, 0);
+        v2 rel = p.vel - surf;
         const float vt = dot(rel, right);
         float dv;
         if (mv != 0.0f) dv = clampf(mv * tune::WALK_SPEED - vt,
@@ -339,68 +354,66 @@ void Game::updatePlayer(Renderer& r, const Input& in, float dt) {
         else            dv = clampf(-vt, -tune::WALK_ACCEL * 1.4f * dt,
                                           tune::WALK_ACCEL * 1.4f * dt);
         rel += right * dv;
-        pl.vel = rel + surf;
-        pl.legPhase += std::fabs(vt) * dt * 0.05f;
+        p.vel = rel + surf;
+        p.legPhase += std::fabs(vt) * dt * 0.05f;
     } else {
-        pl.vel += right * (mv * tune::AIR_ACCEL * dt);
-        pl.legPhase = approach(pl.legPhase, 0.0f, 3.0f, dt);
+        p.vel += right * (mv * tune::AIR_ACCEL * dt);
+        p.legPhase = approach(p.legPhase, 0.0f, 3.0f, dt);
     }
 
     // ---- jump
-    pl.jumpCd -= dt;
-    const bool jumpPressed = in.pressed[VK_SPACE] || in.pressed['W'] || in.pressed[VK_UP];
-    if (jumpPressed && (pl.grounded || pl.coyote > 0) && pl.jumpCd <= 0) {
-        Body* gb = world.get(pl.ground);
-        const v2 surf = gb ? gb->velAt(tov2(pl.pos - gb->pos)) : v2(0, 0);
-        v2 rel = pl.vel - surf;
-        rel += pl.up * tune::JUMP_SPEED;
+    p.jumpCd -= dt;
+    const bool jumpPressed = c.jumpSeq != p.seenJump;
+    p.seenJump = c.jumpSeq;
+    if (jumpPressed && (p.grounded || p.coyote > 0) && p.jumpCd <= 0) {
+        Body* gb = world.get(p.ground);
+        const v2 surf = gb ? gb->velAt(tov2(p.pos - gb->pos)) : v2(0, 0);
+        v2 rel = p.vel - surf;
+        rel += p.up * tune::JUMP_SPEED;
         rel += right * (mv * 90.0f);
-        pl.vel = rel + surf;
+        p.vel = rel + surf;
         // Kick back against the rock. Big ones shrug it off; pebbles do not.
         if (gb) {
-            const v2 rr = tov2(pl.pos - gb->pos);
-            const v2 P  = pl.up * (-70.0f * tune::JUMP_SPEED);
+            const v2 rr = tov2(p.pos - gb->pos);
+            const v2 P  = p.up * (-70.0f * tune::JUMP_SPEED);
             gb->vel    += P * gb->invMass;
             gb->angVel += cross(rr, P) * gb->invInertia;
         }
-        pl.grounded = false;
-        pl.coyote = 0;
-        pl.jumpCd = 0.18f;
-        spawnSparks(pl.pos, pl.up * -70.0f, 7, 90.0f, Col(0.8f, 0.9f, 1.0f), 0.3f);
-        sfx(Sfx::Jump, pl.pos, 0.8f, sfxRng.range(0.95f, 1.06f));
+        p.grounded = false;
+        p.coyote = 0;
+        p.jumpCd = 0.18f;
+        spawnSparks(p.pos, p.up * -70.0f, 7, 90.0f, Col(0.8f, 0.9f, 1.0f), 0.3f);
+        sfx(Sfx::Jump, p.pos, self ? 0.8f : 0.55f, sfxRng.range(0.95f, 1.06f));
     }
 
-    if (debugTrace && ((int)(time * 60.0f) % 45) == 0) {
-        const float want = PIF * 0.5f - std::atan2(pl.up.y, pl.up.x);
+    if (self && debugTrace && ((int)(time * 60.0f) % 45) == 0) {
+        const float want = PIF * 0.5f - std::atan2(p.up.y, p.up.x);
         printf("t=%5.1f grounded=%d up=(%+.2f,%+.2f)  camRoll=%+7.1f  want=%+7.1f  "
                "err=%+5.1f deg  halfW=%.0f\n",
-               time, (int)pl.grounded, pl.up.x, pl.up.y,
+               time, (int)p.grounded, p.up.x, p.up.y,
                cam.angle * 180.0f / PIF, want * 180.0f / PIF,
                wrapAngle(want - cam.angle) * 180.0f / PIF, cam.halfW);
         fflush(stdout);
     }
 
-    pl.facing = dot(aimDir, right) >= 0 ? 1.0f : -1.0f;
+    p.facing = dot(aimDir, right) >= 0 ? 1.0f : -1.0f;
     // The suit heals, but only once nothing has hurt it for a few seconds.
-    pl.sinceHurt += dt;
-    if (pl.sinceHurt > rules::REGEN_DELAY)
-        pl.health = std::min(100.0f, pl.health + rules::REGEN_RATE * dt);
+    p.sinceHurt += dt;
+    if (p.sinceHurt > rules::REGEN_DELAY && !versus)        // a versus match is not a place to hide and heal
+        p.health = std::min(100.0f, p.health + rules::REGEN_RATE * dt);
 
     // ---- weapons
-    pl.fireCd  -= dt;
-    pl.heavyCd -= dt;
-    pl.nukeCd  -= dt;
-    pl.salvoCd -= dt;
-    if (in.pressed['N']) throwNuke(aimDir);
-    if (in.pressed['G']) fireSalvo(aimDir);
-    if (in.mouse[0] && pl.fireCd <= 0) { fire(false); pl.fireCd = tune::FIRE_RATE; }
-    // The charge shot has to be bought: it is the homing shell.
-    if (pl.hasHoming && (in.pressed['F'] || in.mousePressed[2]) && pl.heavyCd <= 0) {
-        fire(true);
-        pl.heavyCd = tune::HEAVY_RATE;
+    p.fireCd  -= dt;
+    p.heavyCd -= dt;
+    if (c.fire && p.fireCd <= 0) { fire(p, false); p.fireCd = tune::FIRE_RATE; }
+    const bool heavyPressed = c.heavySeq != p.seenHeavy;
+    p.seenHeavy = c.heavySeq;
+    if (p.hasHoming && heavyPressed && p.heavyCd <= 0) {
+        fire(p, true);
+        p.heavyCd = tune::HEAVY_RATE;
     }
 
-    pl.vel *= 0.99F;
+    p.vel *= 0.99F;
 }
 
 // ------------------------------------------------------------------ update --
@@ -416,7 +429,9 @@ void Game::update(Renderer& r, const Input& in, float dt) {
     // A lost life restarts the level once the explosion has had its moment.
     if (!paused && state == State::Dead && stateTime > rules::DEATH_TIME) retryLevel(r);
     // R (or Enter on the game-over screen) starts a fresh run.
-    if (in.pressed['R'] || (state == State::GameOver && stateTime > 0.8f && in.pressed[VK_RETURN])) {
+    if (versus) {
+        if (match.over && match.overTime > 1.0f && (in.pressed['R'] || in.pressed[VK_RETURN])) resetMatch();
+    } else if (in.pressed['R'] || (state == State::GameOver && stateTime > 0.8f && in.pressed[VK_RETURN])) {
         if (sandbox) respawn();
         else         startRun(r);
     }
@@ -443,6 +458,7 @@ void Game::update(Renderer& r, const Input& in, float dt) {
             updatePlayer(r, in, dt);
             updateField(dt);
         }
+        if (versus) updateVersus(dt);
         mousePx = in.mousePx;
         updateBullets(dt);
         updateEnemies(dt);
@@ -481,7 +497,8 @@ void Game::update(Renderer& r, const Input& in, float dt) {
         cam.pos.y += j.y;
     }
 
-    world.streamChunks(cam.pos, cam.halfW * 1.7 + 1500.0);
+    if (versus) world.streamChunks(dv2(0, 0), rules::ARENA_RADIUS + 1500.0);
+    else        world.streamChunks(cam.pos, cam.halfW * 1.7 + 1500.0);
     world.syncGeometry(r);
     updateAudio(dt);
 }
@@ -518,25 +535,26 @@ void Game::drawStars(Renderer& r) {
 }
 
 // ------------------------------------------------------------- draw player --
-void Game::drawPlayer(Renderer& r) {
-    const v2 up  = pl.up;
+void Game::drawPlayerFig(Renderer& r, const Player& p) {
+    const v2 up  = p.up;
     const v2 rgt = v2(up.y, -up.x);
-    const float f = pl.facing;
-    const v2 camRel((float)(pl.pos.x - cam.pos.x), (float)(pl.pos.y - cam.pos.y));
-    // pl.pos is the centre of the collision disc, so shift the drawing down
+    const float f = p.facing;
+    const v2 camRel((float)(p.pos.x - cam.pos.x), (float)(p.pos.y - cam.pos.y));
+    // p.pos is the centre of the collision disc, so shift the drawing down
     // by the disc radius and the feet land exactly on the rock.
     const float FOOT = tune::PLAYER_R;
     auto L = [&](float x, float y) {
         return camRel + rgt * (x * f) + up * (y - FOOT);
     };
 
-    const float hurt = pl.hurtGlow;
-    const Col body = mix(C_PLAYER, C_WARN, clampf(hurt, 0.0f, 0.9f));
+    const float hurt = p.hurtGlow;
+    Col body = mix(p.tint, C_WARN, clampf(hurt, 0.0f, 0.9f));
+    if (p.protect > 0.0f && std::fmod(p.protect, 0.25f) < 0.12f) body = mix(body, Col(1, 1, 1), 0.6f);   // flickers while protected
     const float gain = 1.35f;
 
     // legs, swinging while walking
-    const float sw = std::sin(pl.legPhase * 6.0f) * (pl.grounded ? 1.0f : 0.25f);
-    const float lift = pl.grounded ? 0.0f : 1.6f;
+    const float sw = std::sin(p.legPhase * 6.0f) * (p.grounded ? 1.0f : 0.25f);
+    const float lift = p.grounded ? 0.0f : 1.6f;
     r.line(L(0, 7.0f), L( 2.4f * sw, 2.6f + lift), body, gain);
     r.line(L(2.4f * sw, 2.6f + lift), L(2.9f * sw + 0.8f, 0.2f + lift), body, gain);
     r.line(L(0, 7.0f), L(-2.4f * sw, 2.6f + lift), body, gain);
@@ -553,11 +571,11 @@ void Game::drawPlayer(Renderer& r) {
     // helmet + visor
     const v2 head = L(0.2f, 15.2f);
     r.circle(head, 3.25f, 14, body, gain);
-    r.arc(head, 2.35f, pl.aim - 0.85f, pl.aim + 0.85f, 7, C_VISOR, 1.9f);
+    r.arc(head, 2.35f, p.aim - 0.85f, p.aim + 0.85f, 7, C_VISOR, 1.9f);
 
     // arm and rifle, aimed with the cursor
     const v2 shoulder = L(1.4f, 11.6f);
-    const v2 aimDir = fromAngle(pl.aim);
+    const v2 aimDir = fromAngle(p.aim);
     const v2 hand = shoulder + aimDir * 5.2f;
     r.line(shoulder, hand, body, gain);
     r.line(hand - aimDir * 1.5f, hand + aimDir * 6.5f, mix(body, C_BULLET, 0.5f), 1.6f);
@@ -565,8 +583,8 @@ void Game::drawPlayer(Renderer& r) {
            hand + aimDir * 2.0f - perp(aimDir) * 1.2f, body, gain);
 
     // rocket plume
-    if (pl.thrustGlow > 0.02f) {
-        const float t = pl.thrustGlow;
+    if (p.thrustGlow > 0.02f) {
+        const float t = p.thrustGlow;
         const v2 root = L(0.0f, 9.0f) - aimDir * 7.0f;
         for (int i = 0; i < 5; ++i) {
             const float jitter = rng.sym(0.30f);
@@ -578,8 +596,8 @@ void Game::drawPlayer(Renderer& r) {
     }
 
     // where "down" currently is, while airborne
-    if (!pl.grounded) {
-        const v2 g = world.gravityAt(pl.pos, 2600.0);
+    if (!p.grounded && &p == &pl) {
+        const v2 g = world.gravityAt(p.pos, 2600.0);
         if (len2(g) > 250.0f) {
             const v2 d = norm(g);
             const v2 mid = L(0.0f, 9.0f);
@@ -646,12 +664,14 @@ void Game::render(Renderer& r) {
         if (b.heavy) r.circle(p, 6.0f, 9, b.col, 2.0f);
     }
 
-    if (!playerGone()) drawPlayer(r);
+    if (!playerGone()) drawPlayerFig(r, pl);
+    for (const Peer& pe : peers) if (!pe.body.dead) drawPlayerFig(r, pe.body);
     r.flush();
 
     r.setGain(1.0f);
     r.useHudProjection();
     drawHud(r);
+    if (versus) drawVersusHud(r);
 
     // A nuke blows the exposure out for a moment, like a flashbulb.
     const float e0 = r.exposure, b0 = r.bloomAmount;

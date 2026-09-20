@@ -272,6 +272,7 @@ Test harnesses. Each prints `PASS`/`FAIL` (or a summary) and exits:
     -synctest        does a seed determine the world? (no: see Multiplayer)
     -nettest         replicate a shot-up world to an empty one, with loss and latency
     -udptest         the same protocol over real loopback sockets
+    -versus [N]      shoot it out with N bots (default 1) in an arena
     -nosound         start without sound
     -volume V        master volume, 0 to 1.5                     (default 0.8)
     -soundcheck      analyse every synthesised sound and exercise the mixer, no device needed;

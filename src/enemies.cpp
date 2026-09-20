@@ -233,7 +233,22 @@ void Game::explode(dv2 pos, float radius, float enemyDmg, float playerDmg,
             // shrinks with it.
             const float dmg = shieldAbsorb(pos, raw);
             const float through = raw > 0.0f ? dmg / raw : 1.0f;
-            if (dmg > 0.01f) hurtPlayer(dmg, dir * (nuke ? 1100.0f * f : 380.0f * f) * through);
+            if (dmg > 0.01f) hurtPlayer(dmg, dir * (nuke ? 1100.0f * f : 380.0f * f) * through, explodeOwner);
+        }
+    }
+    // In a versus match a blast hurts everyone in reach, by the same falloff.
+    if (playerDmg > 0.0f && versus) {
+        for (Peer& pe : peers) {
+            Player& p = pe.body;
+            if (p.dead) continue;
+            const v2 rel = tov2(p.pos - pos);
+            const float d = len(rel);
+            const float reach = radius * (nuke ? rules::NUKE_REACH : 1.0f);
+            if (d >= reach) continue;
+            const float f = 1.0f - d / reach;
+            const v2 dir = d > 1e-3f ? rel / d : v2(0, 1);
+            const float raw = nuke ? playerDmg * f : playerDmg * (0.3f + 0.7f * f);
+            damagePlayer(p, raw, dir * (nuke ? 1100.0f * f : 380.0f * f), explodeOwner);
         }
     }
     if (carveR > 0.0f)

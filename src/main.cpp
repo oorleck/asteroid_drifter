@@ -171,7 +171,8 @@ int main(int argc, char** argv) {
     bool peaceful = false;
     bool showcase = false, shipGallery = false;
     bool weaponTest = false, shopTest = false, keyLog = false, lifeTest = false, shipTest = false;
-    bool soundCheck = false, soundTest = false, soundQuick = false, noSound = false, soundGameTest = false, syncTest = false, netTest = false, udpTest = false;
+    bool soundCheck = false, soundTest = false, soundQuick = false, noSound = false, soundGameTest = false, syncTest = false, netTest = false, udpTest = false, versusTest = false;
+    int versusBots = 0;
     float volumeArg = -1.0f;
     float aimX = -1, aimY = -1;
     for (int i = 1; i < argc; ++i) {
@@ -199,6 +200,8 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "-synctest"))             syncTest = true;
         else if (!strcmp(argv[i], "-nettest"))              netTest = true;
         else if (!strcmp(argv[i], "-udptest"))              udpTest = true;
+        else if (!strcmp(argv[i], "-versustest"))           versusTest = true;
+        else if (!strcmp(argv[i], "-versus"))               { versusBots = 1; if (i + 1 < argc && argv[i + 1][0] >= '0' && argv[i + 1][0] <= '7') versusBots = atoi(argv[++i]); }
         else if (!strcmp(argv[i], "-nosound"))              noSound = true;
         else if (!strcmp(argv[i], "-volume") && i + 1 < argc) volumeArg = (float)atof(argv[++i]);
         else if (!strcmp(argv[i], "-showcase"))             showcase = true;
@@ -290,6 +293,7 @@ int main(int argc, char** argv) {
     game.invincible = selftest;
     if (povCam) game.povCamera = true;
     game.init(renderer, seed);
+    if (versusBots > 0) game.startVersus(renderer, versusBots);      // -versus N: a match against N bots
     if (zoomArg > 0) { game.zoomTarget = zoomArg; game.cam.halfW = zoomArg; }
     if (wantFullscreen) toggleFullscreen(hwnd);
 
@@ -1085,6 +1089,258 @@ int main(int argc, char** argv) {
         }
 
         printf("synctest: %s\n", failures == 0 ? "PASS" : "FAIL");
+        fflush(stdout);
+        renderer.shutdown();
+        return failures == 0 ? 0 : 1;
+    }
+
+    if (versusTest) {
+        printf("versustest:\n");
+        const float dt = 1.0f / 60.0f;
+        Input idle;
+        idle.mousePx = v2(gWidth * 0.5f, gHeight * 0.5f);
+        int failures = 0;
+        auto check = [&](bool ok, const char* what) {
+            printf("  %-70s %s\n", what, ok ? "ok" : "FAIL");
+            if (!ok) ++failures;
+        };
+        auto run = [&](int n) { for (int i = 0; i < n; ++i) game.update(renderer, idle, dt); };
+
+        // ---- a match starts
+        game.startVersus(renderer, 1);
+        game.invincible = false;
+        check(game.versus && game.sandbox && game.peers.size() == 1, "a match has you and one bot");
+        check(!game.pl.dead && !game.peers[0].body.dead, "both are alive");
+        check(game.pl.health == 100.0f && game.pl.protect > 0.0f, "you start on full suit, protected");
+        check(game.pl.id != game.peers[0].body.id, "and the two have different ids");
+        check(len(game.pl.pos - game.peers[0].body.pos) >= rules::SPAWN_APART * 0.8, "they do not spawn on top of each other");
+        check(len(game.pl.pos) < rules::ARENA_RADIUS && len(game.peers[0].body.pos) < rules::ARENA_RADIUS, "both are inside the arena");
+        {   // both spawn standing on a rock
+            run(60);
+            check(game.pl.grounded || len(game.pl.vel) < 400.0f, "you settle on the rock you spawned on");
+        }
+
+        // A clear stage for the shooting tests: two players in open space.
+        const dv2 A(0.0, 0.0);
+        game.world.clearZone(A, 700.0);
+        auto stage = [&](double gap) {
+            game.resetMatch();
+            game.invincible = false;
+            game.pl.pos = dv2(-gap * 0.5, 0.0);   game.pl.vel = v2(0, 0);   game.pl.protect = 0.0f;
+            Player& b = game.peers[0].body;
+            b.pos = dv2(gap * 0.5, 0.0);          b.vel = v2(0, 0);          b.protect = 0.0f;
+            game.peers[0].bot = false;
+            game.peers[0].cmd = PlayerCmd();
+            game.bullets.clear();
+        };
+        auto aimBotAtPlayer = [&]() {
+            Player& b = game.peers[0].body;
+            b.pos.y = 0.0;  b.vel = v2(0, 0);
+            game.pl.pos.y = 0.0;  game.pl.vel = v2(0, 0);
+            game.peers[0].cmd.aim = std::atan2((float)(game.pl.pos.y - b.pos.y), (float)(game.pl.pos.x - b.pos.x));
+        };
+
+        // ---- shooting
+        {
+            stage(500.0);
+            for (int i = 0; i < 40; ++i) {
+                aimBotAtPlayer();
+                game.peers[0].cmd.fire = i < 20;
+                game.update(renderer, idle, dt);
+            }
+            const float lost = 100.0f - game.pl.health;
+            printf("      a bot fired for a third of a second at 500 units: you lost %.0f suit\n", lost);
+            check(lost >= rules::VS_RIFLE_DAMAGE, "rifle rounds hurt the player they hit");
+            check(std::fmod(lost + 0.01f, rules::VS_RIFLE_DAMAGE) < 0.05f || lost >= 100.0f, "each round costs exactly the rifle damage");
+            check(game.peers[0].body.health == 100.0f, "and the shooter is not hurt by their own rounds");
+        }
+        {
+            stage(500.0);
+            Player& b = game.peers[0].body;
+            // The player shoots the bot; ownership is by id, so the shooter is immune.
+            game.localCmd.aim = 0.0f;
+            game.pl.aim = 0.0f;
+            for (int i = 0; i < 25; ++i) {
+                game.pl.pos.y = 0.0;  game.pl.vel = v2(0, 0);  b.pos.y = 0.0;  b.vel = v2(0, 0);
+                game.pl.fireCd = 0.0f;
+                game.fire(game.pl, false);        // straight along +x, at the bot
+                game.pl.aim = 0.0f;
+                game.update(renderer, idle, dt);
+            }
+            check(game.pl.health == 100.0f, "your own rounds never hurt you");
+            check(b.health < 100.0f, "and they hurt the bot");
+        }
+
+        // ---- spawn protection
+        {
+            stage(500.0);
+            game.pl.protect = 1.0f;
+            for (int i = 0; i < 30; ++i) {
+                aimBotAtPlayer();
+                game.pl.protect = 1.0f;
+                game.peers[0].cmd.fire = true;
+                game.update(renderer, idle, dt);
+            }
+            check(game.pl.health == 100.0f, "a player who has just arrived cannot be hurt");
+        }
+
+        // ---- a kill
+        {
+            stage(500.0);
+            game.pl.health = 5.0f;
+            int tries = 0;
+            while (!game.pl.dead && tries++ < 240) {
+                aimBotAtPlayer();
+                game.peers[0].cmd.fire = true;
+                game.update(renderer, idle, dt);
+            }
+            game.peers[0].cmd.fire = false;
+            check(game.pl.dead && game.playerGone(), "a player at zero suit is out");
+            check(game.peers[0].body.frags == 1 && game.pl.deaths == 1, "the killer is credited with a frag, the victim a death");
+            check(!game.killFeed.empty(), "the kill is announced");
+            const float lostFrags = (float)game.pl.frags;
+            (void)lostFrags;
+            // respawn
+            const dv2 diedAt = game.pl.pos;
+            game.peers[0].cmd.fire = false;
+            run((int)((rules::RESPAWN_TIME + 0.3f) * 60.0f));
+            check(!game.pl.dead && game.pl.health == 100.0f, "they come back after the respawn time");
+            check(game.pl.protect > 0.0f, "protected");
+            check(game.world.probe(game.pl.pos, 6.0f, nullptr, nullptr) < 0 && len(game.pl.pos) < rules::ARENA_RADIUS,
+                  "in open space inside the arena, not buried in rock");
+            check(len(game.pl.pos - diedAt) > 1.0, "and not at the spot where they died");
+        }
+
+        // ---- a shell
+        {
+            stage(500.0);
+            Player& b = game.peers[0].body;
+            game.pl.protect = 0.0f;
+            for (int i = 0; i < 90 && !game.pl.dead && game.pl.health == 100.0f; ++i) {
+                aimBotAtPlayer();
+                if (i == 0) ++game.peers[0].cmd.heavySeq;
+                game.update(renderer, idle, dt);
+            }
+            const float lost = 100.0f - game.pl.health;
+            printf("      one shell at 500 units: %.0f suit\n", lost);
+            check(lost >= rules::VS_HEAVY_DAMAGE * 0.3f && lost <= rules::VS_HEAVY_DAMAGE + 0.1f, "a shell does its damage, less if it lands beside you");
+            (void)b;
+        }
+
+        // ---- a blast credits whoever set it off
+        {
+            stage(500.0);
+            game.pl.protect = 0.0f;
+            game.explodeOwner = game.peers[0].body.id;
+            game.explode(game.pl.pos, 70.0f, 0.0f, 60.0f, 0.0f, 0.0f, false);
+            check(game.pl.health < 100.0f, "a blast hurts a player in reach");
+            game.pl.health = 3.0f;
+            game.explodeOwner = game.peers[0].body.id;
+            game.explode(game.pl.pos, 70.0f, 0.0f, 60.0f, 0.0f, 0.0f, false);
+            check(game.pl.dead && game.peers[0].body.frags == 1, "and a kill by blast credits the one who fired it");
+        }
+
+        // ---- a suicide costs a frag
+        {
+            stage(500.0);
+            game.pl.frags = 3;
+            game.pl.health = 1.0f;
+            game.pl.protect = 0.0f;
+            game.damagePlayer(game.pl, 50.0f, v2(0, 0), -1);
+            check(game.pl.dead && game.pl.frags == 2, "dying to the world costs a frag");
+        }
+
+        // ---- the match ends
+        {
+            stage(500.0);
+            game.peers[0].body.frags = rules::FRAG_LIMIT - 1;
+            game.pl.health = 5.0f;  game.pl.protect = 0.0f;
+            int tries = 0;
+            while (!game.match.over && tries++ < 240) {
+                aimBotAtPlayer();
+                game.peers[0].cmd.fire = true;
+                game.update(renderer, idle, dt);
+            }
+            game.peers[0].cmd.fire = false;
+            check(game.match.over && game.match.winner == game.peers[0].body.id, "reaching the frag limit ends the match with a winner");
+            const float hp = game.pl.health;
+            game.damagePlayer(game.peers[0].body, 30.0f, v2(0, 0), game.pl.id);
+            check(game.peers[0].body.health == 100.0f && hp == game.pl.health, "and nobody can be hurt once it is over");
+            run((int)((rules::VS_MATCH_OVER + 0.5f) * 60.0f));
+            check(!game.match.over && game.pl.frags == 0 && game.peers[0].body.frags == 0, "a new match begins on its own with the scores cleared");
+            // a client must not start matches by itself
+            game.netClient = true;
+            game.match.over = true;  game.match.overTime = 0.0f;
+            run((int)((rules::VS_MATCH_OVER + 0.5f) * 60.0f));
+            check(game.match.over, "a network client waits for the host to say so");
+            game.netClient = false;
+            game.resetMatch();
+        }
+
+        // ---- the wall
+        {
+            stage(500.0);
+            game.pl.pos = dv2(rules::ARENA_RADIUS + 300.0, 0.0);
+            game.pl.vel = v2(120.0f, 0.0f);
+            double maxR = 0;
+            for (int i = 0; i < 240; ++i) {
+                game.pl.protect = 1.0f;
+                game.update(renderer, idle, dt);
+                maxR = std::max(maxR, len(game.pl.pos));
+            }
+            printf("      pushed out to %.0f (arena %.0f), back at %.0f after 4 s\n", maxR, rules::ARENA_RADIUS, len(game.pl.pos));
+            check(len(game.pl.pos) < maxR - 100.0, "past the edge of the arena, something pushes you back in");
+        }
+
+        // ---- bots fight each other and the match keeps going
+        {
+            game.startVersus(renderer, 3);
+            game.invincible = true;                       // so the local player is a bystander
+            game.vsShots = game.vsHits = 0;
+            int frames = 0, maxFrags = 0, outsideMax = 0;
+            double nearestSum = 0;  long nearestN = 0;
+            int matches = 0;
+            for (; frames < 60 * 240; ++frames) {
+                game.update(renderer, idle, dt);
+                if (game.match.over && game.match.overTime < dt * 1.5f) ++matches;   // count each match as it ends
+                game.eachPlayer([&](Player& p) { maxFrags = std::max(maxFrags, p.frags); });
+                if (frames % 30 == 0) {
+                    // how close is each living player to its nearest living opponent?
+                    game.eachPlayer([&](Player& a) {
+                        if (a.dead) return;
+                        double best = 1e30;
+                        game.eachPlayer([&](Player& o) { if (&o != &a && !o.dead) best = std::min(best, len(o.pos - a.pos)); });
+                        if (best < 1e29) { nearestSum += best; ++nearestN; }
+                        outsideMax = std::max(outsideMax, (int)(len(a.pos) > rules::ARENA_RADIUS * 1.6));
+                    });
+                }
+            }
+            int totalDeaths = 0;
+            game.eachPlayer([&](Player& p) { totalDeaths += p.deaths; });
+            printf("      four players, 3 bots, 4 minutes: %d rounds fired, %d landed (%.0f%%), %d matches finished\n",
+                   game.vsShots, game.vsHits, game.vsShots ? 100.0 * game.vsHits / game.vsShots : 0.0, matches);
+            printf("      %d deaths in the current match, leader on %d; on average %.0f units from the nearest opponent\n",
+                   totalDeaths, maxFrags, nearestN ? nearestSum / nearestN : 0.0);
+            check(game.vsHits > 20, "bots hit each other with a fair share of their rounds");
+            check(totalDeaths + matches * rules::FRAG_LIMIT >= 8, "they keep killing each other: at least two kills a minute");
+            check(nearestN && nearestSum / nearestN < 1500.0, "they close the distance rather than sit on their own rocks");
+            check(game.peers.size() == 3, "nobody has vanished");
+            check(outsideMax == 0, "and nobody has drifted far out of the arena");
+        }
+
+        // ---- draw it, once, to prove the HUD does not fall over
+        {
+            game.startVersus(renderer, 2);
+            game.invincible = true;
+            for (int i = 0; i < 60 * 8; ++i) game.update(renderer, idle, dt);
+            game.render(renderer);
+            char path[600];
+            snprintf(path, sizeof path, "%s_versus.png", shotPath);
+            renderer.screenshot(path);
+            check(true, "the arena and its scoreboard draw");
+        }
+
+        printf("versustest: %s\n", failures == 0 ? "PASS" : "FAIL");
         fflush(stdout);
         renderer.shutdown();
         return failures == 0 ? 0 : 1;
