@@ -1,0 +1,9 @@
+# build output
+build/
+
+# screenshots and analysis pictures written by the test harnesses
+shot.png*
+snd_sounds*.png
+gal_ship*.png
+*.obj
+*.pdb
