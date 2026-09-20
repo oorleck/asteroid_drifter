@@ -179,10 +179,20 @@ loaded, so the same chunk reached from two directions holds different rocks (0 o
 9 chunks matched). A joining client cannot generate its own world; the host has to
 send it.
 
+The audit is a slow safety net, not a fast one: it walks every shot-up rock at
+about 50 a second, so a rock that went wrong is noticed within roughly 15 seconds
+(13 s in the test). That is fine for the rare divergence it exists for, and the
+reliable channel is paced (no more than 14 KB per tick, 48 KB in flight), because
+without that a burst of 120 KB overflowed the receiver's socket buffer.
+
 What is *not* done: the game itself (N players, per-player camera and shop, input
-over the wire, client-side prediction, player and bullet replication), the UDP path
-has been written but not yet run between two machines, and nothing here has been
-tried against a different CPU, which is the main remaining risk.
+over the wire, client-side prediction, player and bullet replication). The UDP
+code is tested over real sockets on the loopback interface (`-udptest`: 60 messages
+including 20 KB ones, intact and in order, 0 resends) but has not been run between
+two machines or through a router. And nothing has been tried against a different
+CPU, which is the main remaining risk: the tolerant audit is designed for it, but
+a real cross-machine difference could still be larger than the noise it was tested
+with.
 
 ---
 
@@ -261,6 +271,7 @@ Test harnesses. Each prints `PASS`/`FAIL` (or a summary) and exits:
     -shiptest        warships: schedule, generation, hull, weapons, wreck, retry
     -synctest        does a seed determine the world? (no: see Multiplayer)
     -nettest         replicate a shot-up world to an empty one, with loss and latency
+    -udptest         the same protocol over real loopback sockets
     -nosound         start without sound
     -volume V        master volume, 0 to 1.5                     (default 0.8)
     -soundcheck      analyse every synthesised sound and exercise the mixer, no device needed;

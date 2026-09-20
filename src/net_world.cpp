@@ -339,6 +339,7 @@ bool ClientReplicator::applyReliable(const uint8_t* d, size_t n) {
         b.dirty = b.geomDirty = b.authored = true;
         w->refinalize(s, false);       // the origin came with the field
         ++repairsApplied;
+        repairAsked.erase(id);
         return true;
     }
     case Msg::RockAudit: {
@@ -352,8 +353,10 @@ bool ClientReplicator::applyReliable(const uint8_t* d, size_t n) {
             theirs.cy = (int16_t)r.u16();
             if (r.bad) return false;
             const int s = w->slotOfNetId(id);
-            if (s < 0) { diverged.push_back(id); continue; }          // they have a rock we lack
-            if (!World::summariesClose(w->summarise(s), theirs)) diverged.push_back(id);
+            auto asked = repairAsked.find(id);
+            if (asked != repairAsked.end() && now - asked->second < 3.0) continue;   // already on its way
+            if (s < 0) { diverged.push_back(id); repairAsked[id] = now; continue; }   // they have a rock we lack
+            if (!World::summariesClose(w->summarise(s), theirs)) { diverged.push_back(id); repairAsked[id] = now; }
         }
         return true;
     }

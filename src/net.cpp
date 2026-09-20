@@ -58,13 +58,13 @@ bool startWsa() {
 }
 }  // namespace
 
-bool UdpLink::open(int port) {
+bool UdpLink::open(int port, bool loopbackOnly) {
     if (!startWsa()) { lastError = "WSAStartup failed"; return false; }
     SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (s == INVALID_SOCKET) { lastError = "socket() failed"; return false; }
     sockaddr_in a = {};
     a.sin_family = AF_INET;
-    a.sin_addr.s_addr = INADDR_ANY;
+    a.sin_addr.s_addr = loopbackOnly ? htonl(INADDR_LOOPBACK) : INADDR_ANY;
     a.sin_port = htons((u_short)port);
     if (bind(s, (sockaddr*)&a, sizeof a) == SOCKET_ERROR) {
         char buf[96];
@@ -153,10 +153,19 @@ void Reliable::queue(const std::vector<uint8_t>& payload) {
     outbox.push_back(std::move(o));
 }
 
-void Reliable::collect(double now, std::vector<std::vector<uint8_t>>& out) {
+void Reliable::collect(double now, std::vector<std::vector<uint8_t>>& out, size_t byteBudget) {
+    // What has been sent and not yet acknowledged counts as in flight.
+    size_t inFlight = 0;
+    for (const Out& o : outbox) if (o.tries > 0) inFlight += o.payload.size() + 6;
+
+    size_t spent = 0;
     for (Out& o : outbox) {
         if (now - o.sentAt < resendAfter) continue;
         if (o.tries >= maxTries) continue;
+        const size_t cost = o.payload.size() + 6;
+        if (spent + cost > byteBudget && spent > 0) break;               // the rest goes next flush, in order
+        if (o.tries == 0 && inFlight + spent > maxInFlight) break;       // do not pile new data on top of unacked data
+        spent += cost;
         o.sentAt = now;
         if (o.tries > 0) ++resent;
         ++o.tries;
@@ -261,7 +270,7 @@ void Endpoint::flush(double t) {
     now = t;
     if (!link) return;
     std::vector<std::vector<uint8_t>> framed;         // each is seq:u32 + payload
-    rel.collect(now, framed);
+    rel.collect(now, framed, rel.bytesPerFlush);
 
     const uint32_t ack = rel.wantSeq - 1;
     std::vector<uint8_t> pk;

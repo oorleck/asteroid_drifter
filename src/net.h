@@ -141,7 +141,7 @@ struct LoopLink : Link {
 // Real UDP over Winsock. The host binds a port; a client connects to one address.
 struct UdpLink : Link {
     bool host = false;
-    bool open(int port);                       // host: bind and listen
+    bool open(int port, bool loopbackOnly = false);   // host: bind and listen (loopback-only for tests: no firewall prompt)
     bool connect(const char* ip, int port);    // client: remember where the host is
     bool send(const uint8_t* d, size_t n, int peer) override;
     bool recv(Packet& out) override;
@@ -172,6 +172,10 @@ struct Reliable {
     std::vector<In> holding;
     uint32_t wantSeq = 1;
 
+    // Pacing: no more than this many bytes go out per flush, and none at all while too
+    // much is already in flight. Without it a burst (the whole field on joining, a repair)
+    // overflows the receiver's socket buffer or a router queue, and is mostly lost.
+    size_t bytesPerFlush = 14000, maxInFlight = 48000;
     double resendAfter = 0.25;         // adapts to the measured round trip (see ack)
     double srtt = 0;                   // smoothed round-trip time, 0 until measured
     uint64_t resent = 0;               // messages sent more than once
@@ -179,7 +183,7 @@ struct Reliable {
 
     void queue(const std::vector<uint8_t>& payload);
     // Fills `out` with what should go on the wire now (new and overdue messages).
-    void collect(double now, std::vector<std::vector<uint8_t>>& out);
+    void collect(double now, std::vector<std::vector<uint8_t>>& out, size_t byteBudget = ~(size_t)0);
     // Takes a numbered message off the wire; returns the ones now ready, in order.
     void accept(uint32_t seq, const uint8_t* d, size_t n, std::vector<std::vector<uint8_t>>& ready);
     void ack(uint32_t through);
@@ -264,6 +268,7 @@ struct ClientReplicator {
     void deadReckon(float dt);
     // Rocks whose field no longer matches the host's, found by the last audit.
     std::vector<uint32_t> diverged;
+    std::unordered_map<uint32_t, double> repairAsked;   // when each rock was last reported, so a repair in flight is not asked for twice
     // Test hook: how far to nudge each carve, in world units. Stands in for two
     // machines whose floating point differs in the last few bits.
     float jitter = 0;

@@ -171,7 +171,7 @@ int main(int argc, char** argv) {
     bool peaceful = false;
     bool showcase = false, shipGallery = false;
     bool weaponTest = false, shopTest = false, keyLog = false, lifeTest = false, shipTest = false;
-    bool soundCheck = false, soundTest = false, soundQuick = false, noSound = false, soundGameTest = false, syncTest = false, netTest = false;
+    bool soundCheck = false, soundTest = false, soundQuick = false, noSound = false, soundGameTest = false, syncTest = false, netTest = false, udpTest = false;
     float volumeArg = -1.0f;
     float aimX = -1, aimY = -1;
     for (int i = 1; i < argc; ++i) {
@@ -198,6 +198,7 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "-soundgametest"))        soundGameTest = true;
         else if (!strcmp(argv[i], "-synctest"))             syncTest = true;
         else if (!strcmp(argv[i], "-nettest"))              netTest = true;
+        else if (!strcmp(argv[i], "-udptest"))              udpTest = true;
         else if (!strcmp(argv[i], "-nosound"))              noSound = true;
         else if (!strcmp(argv[i], "-volume") && i + 1 < argc) volumeArg = (float)atof(argv[++i]);
         else if (!strcmp(argv[i], "-showcase"))             showcase = true;
@@ -1089,6 +1090,90 @@ int main(int argc, char** argv) {
         return failures == 0 ? 0 : 1;
     }
 
+    if (udpTest) {
+        // The same protocol over a real socket, on the loopback interface: a host and a
+        // client in one process talking through Winsock. It cannot say anything about
+        // routers or the internet, but it does prove the packets, the fragmenting and the
+        // reliable channel work on actual sockets, not just the in-process link.
+        printf("udptest:\n");
+        int failures = 0;
+        auto check = [&](bool ok, const char* what) {
+            printf("  %-66s %s\n", what, ok ? "ok" : "FAIL");
+            if (!ok) ++failures;
+        };
+        net::UdpLink hostLink, cliLink;
+        const int port = 47831;
+        const bool opened = hostLink.open(port, true);
+        check(opened, "the host binds a UDP port");
+        if (!opened) { printf("  (%s)\n", hostLink.lastError.c_str()); }
+        check(cliLink.connect("127.0.0.1", port), "the client points at the host");
+        if (opened) {
+            net::Endpoint host, cli;
+            host.link = &hostLink;  host.peer = 0;
+            cli.link = &cliLink;    cli.peer = 0;
+
+            // What the client sends first (so the host learns where it is), then a
+            // stream of reliable messages from the host including some far bigger than a packet.
+            std::vector<std::vector<uint8_t>> sent;
+            for (int i = 0; i < 60; ++i) {
+                std::vector<uint8_t> m;
+                m.push_back((uint8_t)(1 + i % 20));
+                const size_t extra = (i % 15 == 7) ? 20000 : (size_t)(10 + i * 7);
+                for (size_t k = 0; k < extra; ++k) m.push_back((uint8_t)((i * 31 + k * 7) & 0x7F));
+                sent.push_back(m);
+            }
+            std::vector<uint8_t> hello = { 1, 'h', 'i' };
+            cli.sendReliable(hello);
+            bool hostHeard = false, queued = false;
+            LARGE_INTEGER f0, t0, t;
+            QueryPerformanceFrequency(&f0);  QueryPerformanceCounter(&t0);
+            auto clock = [&]() { QueryPerformanceCounter(&t); return (double)(t.QuadPart - t0.QuadPart) / (double)f0.QuadPart; };
+            int unrelSent = 0, unrelGot = 0;
+            double doneAt = -1;
+            std::vector<std::vector<uint8_t>> got;
+            double now = 0;
+            while ((now = clock()) < 4.0) {
+                cli.poll(now);
+                for (auto& m : cli.ready) got.push_back(m);
+                cli.ready.clear();
+                unrelGot += (int)cli.unreliable.size();
+                cli.unreliable.clear();
+                cli.flush(now);
+                host.poll(now);
+                for (auto& m : host.ready) if (m == hello) hostHeard = true;
+                host.ready.clear();
+                if (hostHeard && !queued) {
+                    queued = true;
+                    for (auto& m : sent) host.sendReliable(m);
+                }
+                if (queued && unrelSent == 0)                          // a burst of small lossy messages, all at once
+                    for (; unrelSent < 100; ++unrelSent) { std::vector<uint8_t> u = { 2, (uint8_t)unrelSent, 9, 9, 9 }; host.sendUnreliable(u); }
+                host.flush(now);
+                if (got.size() == sent.size() && host.rel.pending() == 0) {
+                    if (doneAt < 0) doneAt = now;
+                    if (now - doneAt > 0.3 || unrelGot >= 100) break;          // let the last lossy ones land
+                }
+                Sleep(2);
+            }
+            check(hostHeard, "the host receives the client's first message");
+            check(got.size() == sent.size(), "every reliable message arrives, including the 20 KB ones");
+            bool same = got.size() == sent.size();
+            for (size_t i = 0; same && i < got.size(); ++i) same = got[i] == sent[i];
+            check(same, "and each arrives intact and in order");
+            printf("      lossy messages: %d sent, %d arrived\n", unrelSent, unrelGot);
+            check(unrelGot >= 95, "at least 95 of 100 lossy messages arrive (a loopback drops almost none)");
+            check(host.rel.pending() == 0, "the host has been told everything was received");
+            printf("      took %.2f s; host sent %llu packets (%llu bytes), client %llu; round trip %.1f ms; %d resends\n",
+                   now, (unsigned long long)hostLink.packetsSent, (unsigned long long)hostLink.bytesSent,
+                   (unsigned long long)cliLink.packetsSent, host.rel.srtt * 1000.0, (int)host.rel.resent);
+            check(host.rel.srtt < 0.05, "the measured round trip on loopback is under 50 ms");
+        }
+        printf("udptest: %s\n", failures == 0 ? "PASS" : "FAIL");
+        fflush(stdout);
+        renderer.shutdown();
+        return failures == 0 ? 0 : 1;
+    }
+
     if (netTest) {
         // The spike: can a second machine keep an identical, shot-up asteroid field
         // from nothing but messages, and what does that cost on the wire?
@@ -1108,7 +1193,7 @@ int main(int argc, char** argv) {
 
         struct Result { bool sameSet = false; int hostRocks = 0, cliRocks = 0, hashMismatch = 0;
                         double meanErr = 0, maxErr = 0; double steadyKBps = 0, initialKB = 0;
-                        int repairs = 0, resends = 0, sabotaged = 0; double rtt = 0; bool joined = false; int inexact = 0; };
+                        int repairs = 0, resends = 0, sabotaged = 0; double rtt = 0; bool joined = false; int inexact = 0; int sabotagedAlive = 0, sabotagedRepaired = 0; double firstDetect = 0; };
 
         auto run = [&](const char* label, float loss, double latency, double attackSeconds, int shooters, bool sabotage, float jitter = 0.0f) -> Result {
             static World hostW, cliW;
@@ -1144,6 +1229,8 @@ int main(int argc, char** argv) {
             uint64_t sentAtAttackEnd = 0;
             int repairsRequested = 0, sabotageCount = 0;
             bool sabotaged = false;
+            std::vector<uint32_t> sabotagedIds, repairedIds;
+            double sabotagedAt = 0, firstRepairAt = 0;
             std::vector<uint8_t> buf;
 
             // How many rocks a "shooter" can pick from: those near the origin.
@@ -1182,6 +1269,7 @@ int main(int argc, char** argv) {
                     for (int s = 0; s < (int)cliW.bodies.size() && corrupted < 4; ++s) {
                         Body& b = cliW.bodies[s];
                         if (!b.alive || !b.authored || b.f.d.size() < 400) continue;     // a real rock, not a pebble
+                        sabotagedIds.push_back(b.netId);
                         if (corrupted < 3) {
                             // A carve that never arrived: solid material where the host has a hole.
                             for (int y = 0; y < b.f.h; ++y)
@@ -1195,6 +1283,7 @@ int main(int argc, char** argv) {
                         ++corrupted;
                     }
                     sabotageCount = corrupted;
+                    sabotagedAt = now;
                 }
 
                 // ---- host: the game happens
@@ -1236,6 +1325,12 @@ int main(int argc, char** argv) {
                         for (uint32_t id : cr.diverged) w.u32(id);
                         cli.sendReliable(w.b);
                         repairsRequested += (int)cr.diverged.size();
+                        for (uint32_t id : cr.diverged) {
+                            const bool mine = std::find(sabotagedIds.begin(), sabotagedIds.end(), id) != sabotagedIds.end();
+                            repairedIds.push_back(id);
+                            if (mine && firstRepairAt == 0) firstRepairAt = now;
+                            if (sabotage) printf("      [t=%.1f] repair asked for rock %u: %s\n", now, id, mine ? "one we damaged" : "NOT one we damaged");
+                        }
                         cr.diverged.clear();
                     }
                 }
@@ -1304,6 +1399,12 @@ int main(int argc, char** argv) {
             res.repairs = repairsRequested;
             res.resends = (int)host.rel.resent;
             res.sabotaged = sabotageCount;
+            for (uint32_t id : sabotagedIds) {
+                if (!hostIds.count(id)) continue;                       // the host has since split or removed it: nothing left to repair
+                ++res.sabotagedAlive;
+                if (std::find(repairedIds.begin(), repairedIds.end(), id) != repairedIds.end()) ++res.sabotagedRepaired;
+            }
+            res.firstDetect = firstRepairAt > 0 ? firstRepairAt - sabotagedAt : -1.0;
             res.joined = joinedInTime;
             res.rtt = host.rel.srtt;
 
@@ -1347,7 +1448,11 @@ int main(int argc, char** argv) {
         // purpose (three warped rocks and one lost one) and check the host notices.
         const Result broken = run("sabotaged client", 0.02f, 0.040, 30.0, 1, true);
         check(broken.sabotaged == 4, "sabotage: four rocks were damaged on the client");
-        check(broken.repairs >= 4, "sabotage: the audit noticed all four");
+        printf("      sabotage: %d rocks damaged, %d of them still exist on the host, %d of those were repaired; first noticed %.1f s after\n",
+               broken.sabotaged, broken.sabotagedAlive, broken.sabotagedRepaired, broken.firstDetect);
+        check(broken.sabotagedAlive >= 1, "sabotage: at least one damaged rock survived to be checked");
+        check(broken.sabotagedRepaired == broken.sabotagedAlive, "sabotage: every damaged rock that still exists was caught and repaired");
+        check(broken.firstDetect > 0.0 && broken.firstDetect < 25.0, "sabotage: and the first was noticed within 25 s");
         check(broken.hashMismatch == 0 && broken.sameSet, "sabotage: and after the repair the worlds agree again");
 
         // Two machines whose arithmetic differs in the last bits. A nudge of a thousandth
