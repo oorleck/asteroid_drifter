@@ -34,6 +34,8 @@ struct Body {
     Col   color;
     uint32_t seed = 0;
     uint32_t gen  = 0;             // bumped on slot reuse, for stale handles
+    uint32_t netId = 0;            // stable across machines; 0 when not in a network game
+    float genRadius = 0;           // the radius it was generated with; with the seed, all a fresh rock needs
     bool  alive = false;
     bool  dirty = false;           // field changed: recheck mass and splits
     bool  geomDirty = false;       // contour must be re-extracted and uploaded
@@ -70,6 +72,27 @@ struct BodyRef {
     void clear() { slot = -1; }
 };
 
+// Everything that changes the *shape* of the world, recorded in the order it
+// happened. A rock is a pure function of its radius and seed plus the carves
+// applied to it, so this journal is enough to rebuild an identical world
+// somewhere else; see net.h. Off unless someone turns it on, and it costs one
+// branch when it is off.
+struct WorldOp {
+    enum Kind : uint8_t { Spawn, Carve, Split, Remove, Settle };   // Settle: re-centred on its centre of mass
+    Kind     kind;
+    uint32_t id = 0;              // net id of the rock it happened to
+    uint32_t seed = 0;
+    float    radius = 0, wobble = 0;
+    v2       local;               // carve centre, in the rock's own frame
+    dv2      pos;                 // spawn position
+    v2       vel;
+    float    ang = 0, angVel = 0;
+    // A split hands its surviving pieces consecutive ids, so the pieces only need
+    // naming once. Both sides label the components in the same order.
+    uint32_t firstChild = 0;
+    uint8_t  children = 0;
+};
+
 // Something worth drawing a puff of sparks for.
 struct WorldEvent {
     enum Kind { Debris, Split, Impact };
@@ -87,10 +110,37 @@ struct World {
     uint64_t seed = 0x5EEDFACEull;
     int liveCount = 0, simCount = 0, rebuildsThisFrame = 0, contactsThisFrame = 0;
 
+    // ---- journalling, for replicating the world to another machine ---------
+    bool     journal = false;      // when on, every shape change is recorded in ops
+    std::vector<WorldOp> ops;
+    uint32_t nextNetId = 1;        // the host hands these out
+    std::unordered_map<uint32_t, int> byNetId;    // net id -> slot, kept while journalling
+    uint32_t assignNetId(int slot);
+    bool     splitting = false;    // inside splitBody: the parent is reported as a Split, not a Remove
+    int      slotOfNetId(uint32_t id) const;
+    // Carve in the rock's own frame. Replication uses this so a carve lands in
+    // exactly the same place whatever the body's transform happens to be.
+    bool damageLocal(int slot, v2 localPos, float radius, float wobble, uint32_t rseed);
+    // A cheap hash of a rock's field, so two machines can tell they still agree.
+    uint32_t fieldHash(int slot) const;        // exact: any sample differing changes it
+    // A summary that tolerates noise. Two machines whose arithmetic differs in the last
+    // bit will disagree about the odd sample right on a rock's edge, and that is not
+    // worth repairing; a missed carve moves the count and the centroid a great deal.
+    struct FieldSummary { uint32_t solid = 0; int16_t cx = 0, cy = 0; };
+    FieldSummary summarise(int slot) const;
+    static bool summariesClose(const FieldSummary& a, const FieldSummary& b);
+    // Replication needs to drive these directly. The pieces of a split are listed
+    // in the order they were created, which is the order both machines name them
+    // in; slot numbers are local to one machine and cannot be used for that.
+    void splitNow(int slot) { splitBody(slot); }
+    void refinalize(int slot, bool recenter) { finalizeBody(slot, recenter); }
+    std::vector<int> lastSplitPieces;
+
     void init(uint64_t worldSeed);
     void streamChunks(dv2 centre, double viewRadius, int loadBudget = 3);
     void step(float dt, dv2 focus);
     void syncGeometry(Renderer& r);      // budgeted contour rebuild + GPU upload
+    void settleDirty();                  // the split/re-centre half of that, which needs no renderer
     void collectRenderData(const Camera& cam, Renderer& r,
                            std::vector<BodyXform>& xf,
                            std::vector<int>& firsts, std::vector<int>& counts);

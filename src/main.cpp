@@ -2,6 +2,7 @@
 // No external libraries: everything links against opengl32 and gdi32.
 #include "gl.h"
 #include "game.h"
+#include "net.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -170,7 +171,7 @@ int main(int argc, char** argv) {
     bool peaceful = false;
     bool showcase = false, shipGallery = false;
     bool weaponTest = false, shopTest = false, keyLog = false, lifeTest = false, shipTest = false;
-    bool soundCheck = false, soundTest = false, soundQuick = false, noSound = false, soundGameTest = false, syncTest = false;
+    bool soundCheck = false, soundTest = false, soundQuick = false, noSound = false, soundGameTest = false, syncTest = false, netTest = false;
     float volumeArg = -1.0f;
     float aimX = -1, aimY = -1;
     for (int i = 1; i < argc; ++i) {
@@ -196,6 +197,7 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "-soundquick"))           { soundTest = true; soundQuick = true; }
         else if (!strcmp(argv[i], "-soundgametest"))        soundGameTest = true;
         else if (!strcmp(argv[i], "-synctest"))             syncTest = true;
+        else if (!strcmp(argv[i], "-nettest"))              netTest = true;
         else if (!strcmp(argv[i], "-nosound"))              noSound = true;
         else if (!strcmp(argv[i], "-volume") && i + 1 < argc) volumeArg = (float)atof(argv[++i]);
         else if (!strcmp(argv[i], "-showcase"))             showcase = true;
@@ -1082,6 +1084,290 @@ int main(int argc, char** argv) {
         }
 
         printf("synctest: %s\n", failures == 0 ? "PASS" : "FAIL");
+        fflush(stdout);
+        renderer.shutdown();
+        return failures == 0 ? 0 : 1;
+    }
+
+    if (netTest) {
+        // The spike: can a second machine keep an identical, shot-up asteroid field
+        // from nothing but messages, and what does that cost on the wire?
+        //
+        // A host world is streamed, populated and attacked (rifle tunnels, heavy
+        // shells, and the odd nuke, all through the real World::damage / explode).
+        // A client world starts EMPTY and, with a different seed, cannot cheat by
+        // generating anything itself. They are joined by two in-process links with
+        // configurable loss and latency. At the end the two worlds are compared rock
+        // by rock: same set, same field, and how far apart in position.
+        printf("nettest:\n");
+        int failures = 0;
+        auto check = [&](bool ok, const char* what) {
+            printf("  %-70s %s\n", what, ok ? "ok" : "FAIL");
+            if (!ok) ++failures;
+        };
+
+        struct Result { bool sameSet = false; int hostRocks = 0, cliRocks = 0, hashMismatch = 0;
+                        double meanErr = 0, maxErr = 0; double steadyKBps = 0, initialKB = 0;
+                        int repairs = 0, resends = 0, sabotaged = 0; double rtt = 0; bool joined = false; int inexact = 0; };
+
+        auto run = [&](const char* label, float loss, double latency, double attackSeconds, int shooters, bool sabotage, float jitter = 0.0f) -> Result {
+            static World hostW, cliW;
+            const uint64_t seed = 0x5EEDFACEull;
+            hostW.init(seed);
+            cliW.init(seed ^ 0xDEADBEEFull);                 // a different seed: it must not generate its own rocks
+            hostW.streamChunks(dv2(0, 0), 3000.0, 100000);
+            hostW.step(1.0f / 60.0f, dv2(0, 0));
+            hostW.settleDirty();
+
+            net::HostReplicator rep;      rep.begin(hostW);
+            net::ClientReplicator cr;     cr.begin(cliW);  cr.jitter = jitter;
+            net::LoopLink la, lb;
+            la.other = &lb;  lb.other = &la;
+            la.loss = lb.loss = loss;
+            la.latency = lb.latency = latency;
+            la.rng = 777;  lb.rng = 4242;
+            net::Endpoint host, cli;
+            host.link = &la;  cli.link = &lb;
+
+            std::vector<std::vector<uint8_t>> msgs;
+            rep.collectInitial(msgs);
+            for (auto& m : msgs) host.sendReliable(m);
+
+            Rng rng(99);
+            const float dt = 1.0f / 60.0f;
+            double now = 0;
+            const double joinSeconds = 3.0;                       // nothing but the field arriving
+            const double total = joinSeconds + attackSeconds + 5.0;
+            const int frames = (int)(total * 60.0);
+            uint64_t sentAtInitialDone = 0;
+            bool initialDone = false, attackDone = false, joinedInTime = false;
+            uint64_t sentAtAttackEnd = 0;
+            int repairsRequested = 0, sabotageCount = 0;
+            bool sabotaged = false;
+            std::vector<uint8_t> buf;
+
+            // How many rocks a "shooter" can pick from: those near the origin.
+            auto pickRock = [&]() -> int {
+                std::vector<int> cand;
+                for (int s : hostW.active) {
+                    const Body& b = hostW.bodies[s];
+                    if (b.alive && len2(b.pos) < 1800.0 * 1800.0 && b.radius > 24.0f) cand.push_back(s);
+                }
+                if (cand.empty()) return -1;
+                return cand[(size_t)rng.i(0, (int)cand.size() - 1)];
+            };
+            auto shoot = [&](float caliber, int carves) {
+                const int s = pickRock();
+                if (s < 0) return;
+                Body& b = hostW.bodies[s];
+                const v2 dir = rng.dir();
+                const float R = b.radius;
+                const float off = rng.sym(R * 0.5f);
+                for (int i = 0; i < carves; ++i) {
+                    const float t = -R + (float)i * caliber * 0.62f;
+                    const v2 p = perp(dir) * off + dir * t;
+                    hostW.damage(s, dv2(b.pos.x + p.x, b.pos.y + p.y), caliber, 0.34f, rng.u32());
+                }
+            };
+
+            for (int f = 0; f < frames; ++f) {
+                now += dt;
+                la.advance(dt);  lb.advance(dt);
+                const bool attacking = now >= joinSeconds && now < joinSeconds + attackSeconds;
+
+                // ---- sabotage: make the client wrong in the ways a real one could go wrong
+                if (sabotage && !sabotaged && now > joinSeconds + attackSeconds * 0.4) {
+                    sabotaged = true;
+                    int corrupted = 0;
+                    for (int s = 0; s < (int)cliW.bodies.size() && corrupted < 4; ++s) {
+                        Body& b = cliW.bodies[s];
+                        if (!b.alive || !b.authored || b.f.d.size() < 400) continue;     // a real rock, not a pebble
+                        if (corrupted < 3) {
+                            // A carve that never arrived: solid material where the host has a hole.
+                            for (int y = 0; y < b.f.h; ++y)
+                                for (int x = 0; x < b.f.w; ++x) {
+                                    const v2 p = b.f.samplePos(x, y);
+                                    if (len(p - v2(b.f.w * b.f.cell * 0.15f, b.f.h * b.f.cell * 0.15f) - b.f.origin) < 16.0f)
+                                        b.f.at(x, y) = std::max(b.f.at(x, y), 4.0f);
+                                }
+                        }
+                        else               cliW.destroy(s);                                                   // a rock it lost
+                        ++corrupted;
+                    }
+                    sabotageCount = corrupted;
+                }
+
+                // ---- host: the game happens
+                if (attacking && (f % 2) == 0) {
+                    // two players firing the rifle: about 24 shots a second between them
+                    for (int k = 0; k < shooters; ++k) shoot(5.2f, 3);
+                    if (rng.f() < 0.5f) shoot(5.2f, 3);
+                    if (f % 120 == 0) shoot(21.0f, 5);                       // a heavy shell now and then
+                    if (f % 360 == 0) {                                      // and a nuke every six seconds
+                        const int s = pickRock();
+                        if (s >= 0) hostW.explode(hostW.bodies[s].pos, 323.0f, 391.0f, 3.2e6f, rng.u32());
+                    }
+                }
+                hostW.step(dt, dv2(0, 0));
+                hostW.settleDirty();
+
+                // ---- host: tell the client
+                msgs.clear();
+                rep.collectShapeChanges(msgs);
+                for (auto& m : msgs) host.sendReliable(m);
+                if ((f % 2) == 0) {
+                    buf.clear();
+                    rep.collectMotion(now, buf);
+                    if (!buf.empty()) host.sendUnreliable(buf);
+                    buf.clear();
+                    rep.collectAudit(now, buf);
+                    if (!buf.empty()) host.sendReliable(buf);
+                }
+                host.flush(now);
+
+                // ---- the network delivers; the client applies
+                cli.poll(now);
+                for (auto& m : cli.ready) {
+                    cr.applyReliable(m.data(), m.size());
+                    if (!m.empty() && (net::Msg)m[0] == net::Msg::RockAudit && !cr.diverged.empty()) {
+                        net::Writer w;
+                        w.u8((uint8_t)net::Msg::RockRepair);
+                        w.u16((uint16_t)cr.diverged.size());
+                        for (uint32_t id : cr.diverged) w.u32(id);
+                        cli.sendReliable(w.b);
+                        repairsRequested += (int)cr.diverged.size();
+                        cr.diverged.clear();
+                    }
+                }
+                cli.ready.clear();
+                for (auto& m : cli.unreliable) cr.applyUnreliable(m.data(), m.size());
+                cli.unreliable.clear();
+                cr.deadReckon(dt);
+                cli.flush(now);
+
+                // ---- host: a repair request arrives
+                host.poll(now);
+                for (auto& m : host.ready) {
+                    net::Reader r(m.data(), m.size());
+                    if ((net::Msg)r.u8() != net::Msg::RockRepair) continue;
+                    const uint16_t n = r.u16();
+                    for (uint16_t i = 0; i < n && !r.bad; ++i) {
+                        std::vector<uint8_t> field;
+                        rep.writeField(r.u32(), field);
+                        if (!field.empty()) host.sendReliable(field);
+                    }
+                }
+                host.ready.clear();
+                host.unreliable.clear();
+
+                // Bandwidth is read off at the two edges of the shooting.
+                if (!initialDone && now >= joinSeconds) {
+                    initialDone = true;
+                    sentAtInitialDone = la.bytesSent;              // everything sent while joining
+                    joinedInTime = host.rel.pending() == 0;
+                }
+                if (!attackDone && now >= joinSeconds + attackSeconds) {
+                    attackDone = true;
+                    sentAtAttackEnd = la.bytesSent;
+                }
+            }
+
+            // ---- compare
+            Result res;
+            std::unordered_map<uint32_t, int> hostIds;
+            for (int s = 0; s < (int)hostW.bodies.size(); ++s)
+                if (hostW.bodies[s].alive && hostW.bodies[s].netId) hostIds[hostW.bodies[s].netId] = s;
+            std::unordered_map<uint32_t, int> cliIds;
+            for (int s = 0; s < (int)cliW.bodies.size(); ++s)
+                if (cliW.bodies[s].alive && cliW.bodies[s].netId) cliIds[cliW.bodies[s].netId] = s;
+            res.hostRocks = (int)hostIds.size();
+            res.cliRocks = (int)cliIds.size();
+            int missing = 0;
+            double sumErr = 0;
+            for (auto& kv : hostIds) {
+                auto it = cliIds.find(kv.first);
+                if (it == cliIds.end()) { ++missing; continue; }
+                const Body& hb = hostW.bodies[kv.second];
+                const Body& cb = cliW.bodies[it->second];
+                if (!World::summariesClose(hostW.summarise(kv.second), cliW.summarise(it->second))) ++res.hashMismatch;
+                if (hostW.fieldHash(kv.second) != cliW.fieldHash(it->second)) ++res.inexact;
+                const double err = len(tov2(hb.pos - cb.pos));
+                sumErr += err;
+                res.maxErr = std::max(res.maxErr, err);
+            }
+            for (auto& kv : cliIds) if (!hostIds.count(kv.first)) ++missing;
+            res.sameSet = missing == 0;
+            res.meanErr = hostIds.empty() ? 0 : sumErr / (double)hostIds.size();
+
+            res.steadyKBps = (double)(sentAtAttackEnd - sentAtInitialDone) / 1024.0 / attackSeconds;
+            res.initialKB = (double)sentAtInitialDone / 1024.0;
+            res.repairs = repairsRequested;
+            res.resends = (int)host.rel.resent;
+            res.sabotaged = sabotageCount;
+            res.joined = joinedInTime;
+            res.rtt = host.rel.srtt;
+
+            printf("\n  [%s] loss %.0f%%, latency %.0f ms, %.0f s of shooting\n", label, loss * 100.0f, latency * 1000.0, attackSeconds);
+            printf("      rocks: host %d, client %d   carves sent %d, rocks introduced %d, splits applied %d\n",
+                   res.hostRocks, res.cliRocks, rep.carvesSent, rep.rocksIntroduced, cr.splitsApplied);
+            printf("      joining: %.1f KB in the first 3 s, for %d rocks\n", res.initialKB, res.hostRocks);
+            printf("      host -> client while playing: %.1f KB/s   (shape %.1f, motion %.1f, audit %.1f, repairs %.1f KB total)\n",
+                   res.steadyKBps, rep.shapeBytes / 1024.0, rep.motionBytes / 1024.0, rep.auditBytes / 1024.0, rep.fieldBytes / 1024.0);
+            printf("      motion messages: %d sent for %.0f s = %.0f a second\n", rep.motionsSent, total, rep.motionsSent / total);
+            printf("      position error at the end: mean %.2f, max %.2f units   field mismatches: %d   repairs asked for: %d\n",
+                   res.meanErr, res.maxErr, res.hashMismatch, res.repairs);
+            printf("      messages re-sent: %d   round trip measured at %.0f ms\n", res.resends, res.rtt * 1000.0);
+            printf("      rocks not bit-for-bit identical (tolerated): %d\n", res.inexact);
+            printf("      packets host->client %llu, client->host %llu\n",
+                   (unsigned long long)la.packetsSent, (unsigned long long)lb.packetsSent);
+            return res;
+        };
+
+        // A quiet game: two people shooting, over a perfect link.
+        const Result clean = run("clean link", 0.0f, 0.0, 30.0, 1, false);
+        check(clean.sameSet, "clean link: the client ends up with exactly the host's rocks");
+        check(clean.hashMismatch == 0, "clean link: every rock's shape matches, without any repair");
+        check(clean.maxErr < 25.0, "clean link: every rock is close to where the host has it");
+
+        // The same game over a bad connection.
+        const Result lossy = run("lossy link", 0.05f, 0.060, 30.0, 1, false);
+        check(lossy.sameSet, "5% loss, 60 ms: the client still ends up with exactly the host's rocks");
+        check(lossy.hashMismatch == 0, "5% loss, 60 ms: every rock's shape matches");
+        check(lossy.maxErr < 45.0, "5% loss, 60 ms: every rock is close to where the host has it");
+
+        // A terrible one. The resend timer has to learn the round trip or it will
+        // send everything twice before the first acknowledgement can get back.
+        const Result awful = run("awful link", 0.20f, 0.150, 20.0, 1, false);
+        check(awful.sameSet, "20% loss, 150 ms: the client still ends up with exactly the host's rocks");
+        check(awful.hashMismatch == 0, "20% loss, 150 ms: every rock's shape matches");
+        check(awful.rtt > 0.25 && awful.rtt < 0.5, "20% loss, 150 ms: the round trip is measured (about 300 ms)");
+        check(awful.initialKB < clean.initialKB * 3.0, "20% loss, 150 ms: joining costs under 3x the clean price, not 8x");
+
+        // The repair path, which nothing else exercises: make the client wrong on
+        // purpose (three warped rocks and one lost one) and check the host notices.
+        const Result broken = run("sabotaged client", 0.02f, 0.040, 30.0, 1, true);
+        check(broken.sabotaged == 4, "sabotage: four rocks were damaged on the client");
+        check(broken.repairs >= 4, "sabotage: the audit noticed all four");
+        check(broken.hashMismatch == 0 && broken.sameSet, "sabotage: and after the repair the worlds agree again");
+
+        // Two machines whose arithmetic differs in the last bits. A nudge of a thousandth
+        // of a unit per carve is far bigger than a real last-bit difference would be, so
+        // this is a hard test of whether tolerance plus repair keeps the worlds together.
+        const Result jittery = run("float noise", 0.02f, 0.040, 30.0, 1, false, 0.001f);
+        check(jittery.sameSet && jittery.hashMismatch == 0, "float noise: the worlds still end up agreeing");
+        check(jittery.repairs < 20, "float noise: and it takes fewer than 20 repairs to keep them there");
+        const Result jittery2 = run("heavy float noise", 0.02f, 0.040, 30.0, 1, false, 0.05f);
+        check(jittery2.sameSet && jittery2.hashMismatch == 0, "heavy noise (0.05 units): the repairs still bring them back together");
+
+        // A busy game: eight people firing at once.
+        const Result stress = run("stress", 0.02f, 0.040, 30.0, 8, false);
+        check(stress.sameSet && stress.hashMismatch == 0, "eight shooters: the worlds still agree exactly");
+
+        check(clean.steadyKBps < 60.0, "the steady traffic to one client is under 60 KB/s");
+        check(stress.steadyKBps < 120.0, "even eight shooters stay under 120 KB/s");
+        check(clean.initialKB < 200.0, "joining costs under 200 KB");
+
+        printf("nettest: %s\n", failures == 0 ? "PASS" : "FAIL");
         fflush(stdout);
         renderer.shutdown();
         return failures == 0 ? 0 : 1;

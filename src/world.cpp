@@ -13,6 +13,7 @@ void World::init(uint64_t worldSeed) {
     pendingFree.clear();
     events.clear();
     zones.clear();
+    ops.clear();  byNetId.clear();  nextNetId = 1;  journal = false;
     liveCount = 0;
 }
 
@@ -27,6 +28,62 @@ static Col rockColour(uint32_t s) {
     else                c = Col(0.40f, 0.48f, 0.52f);      // steel
     const float b = rng.range(1.7f, 2.6f);     // pushed well over the bloom threshold
     return Col(c.r * b, c.g * b, c.b * b, 1.0f);
+}
+
+// ---------------------------------------------------------- journalling --
+uint32_t World::assignNetId(int slot) {
+    Body& b = bodies[slot];
+    if (b.netId == 0) {
+        b.netId = nextNetId++;
+        byNetId[b.netId] = slot;
+    }
+    return b.netId;
+}
+
+int World::slotOfNetId(uint32_t id) const {
+    auto it = byNetId.find(id);
+    if (it == byNetId.end()) return -1;
+    const int s = it->second;
+    if (s < 0 || s >= (int)bodies.size()) return -1;
+    return (bodies[s].alive && bodies[s].netId == id) ? s : -1;
+}
+
+// A rock's field is a plain grid of floats, so this is enough to notice that two
+// machines have stopped agreeing about a rock. It is a check, not a signature.
+uint32_t World::fieldHash(int slot) const {
+    if (slot < 0 || slot >= (int)bodies.size()) return 0;
+    const Body& b = bodies[slot];
+    if (!b.alive) return 0;
+    uint32_t h = 2166136261u;
+    auto mix = [&h](uint32_t v) { h = (h ^ v) * 16777619u; };
+    mix((uint32_t)b.f.w);  mix((uint32_t)b.f.h);
+    // Quantised, so the last bit of float noise does not read as a disagreement.
+    for (size_t i = 0; i < b.f.d.size(); i += 3)
+        mix((uint32_t)(int32_t)std::lround(b.f.d[i] * 16.0f));
+    return h;
+}
+
+bool World::damageLocal(int slot, v2 localPos, float radius, float wobble, uint32_t rseed) {
+    if (slot < 0 || slot >= (int)bodies.size()) return false;
+    Body& b = bodies[slot];
+    if (!b.alive || b.f.d.empty()) return false;
+    if (!fieldCarveDisc(b.f, localPos, radius, wobble, rseed)) return false;
+    b.dirty      = true;
+    b.geomDirty  = true;
+    b.authored   = true;
+    b.flash      = 1.0f;
+    b.lastImpact = localPos;
+    if (journal) {
+        WorldOp op;
+        op.kind = WorldOp::Carve;
+        op.id = assignNetId(slot);
+        op.local = localPos;
+        op.radius = radius;
+        op.wobble = wobble;
+        op.seed = rseed;
+        ops.push_back(op);
+    }
+    return true;
 }
 
 int World::spawn(dv2 p, float radius, uint32_t rseed) {
@@ -46,10 +103,21 @@ int World::spawn(dv2 p, float radius, uint32_t rseed) {
     b.pos   = p;
     b.seed  = rseed;
     b.color = rockColour(rseed);
+    b.genRadius = radius;
     b.alive = true;
     fieldMakeRock(b.f, radius, rseed);
     finalizeBody(slot, true);
-    return bodies[slot].alive ? slot : -1;
+    if (!bodies[slot].alive) return -1;
+    if (journal) {
+        WorldOp op;
+        op.kind = WorldOp::Spawn;
+        op.id = assignNetId(slot);
+        op.pos = p;
+        op.radius = radius;          // the requested radius: what rebuilds the shape
+        op.seed = rseed;
+        ops.push_back(op);
+    }
+    return slot;
 }
 
 void World::clearZone(dv2 centre, double radius) {
@@ -85,6 +153,16 @@ bool World::spaceFree(dv2 p, double radius, double margin) const {
 void World::destroy(int slot) {
     Body& b = bodies[slot];
     if (!b.alive) return;
+    if (journal && b.netId) {
+        byNetId.erase(b.netId);
+        if (!splitting) {                  // a split reports the parent itself
+            WorldOp op;
+            op.kind = WorldOp::Remove;
+            op.id = b.netId;
+            ops.push_back(op);
+        }
+    }
+    b.netId = 0;
     b.alive = false;
     b.gen++;
     if (b.geom.valid()) pendingFree.push_back(b.geom);
@@ -179,11 +257,9 @@ void World::rebuildGeometry(int slot, Renderer& r) {
     b.geomDirty = false;
 }
 
-void World::syncGeometry(Renderer& r) {
-    for (GeomSlot s : pendingFree) r.freeBody(s);
-    pendingFree.clear();
-
-    // Damage first: a carved field may have fallen apart into several rocks.
+// Damage first: a carved field may have fallen apart into several rocks, or just
+// moved its centre of mass. Budgeted, so a big blast is spread over a few frames.
+void World::settleDirty() {
     rebuildsThisFrame = 0;
     for (size_t i = 0; i < bodies.size(); ++i) {
         if (rebuildsThisFrame >= cfg::REBUILD_BUDGET) break;
@@ -191,6 +267,13 @@ void World::syncGeometry(Renderer& r) {
         splitBody((int)i);
         ++rebuildsThisFrame;
     }
+}
+
+void World::syncGeometry(Renderer& r) {
+    for (GeomSlot s : pendingFree) r.freeBody(s);
+    pendingFree.clear();
+
+    settleDirty();
     // Then re-contour whatever changed shape.
     int uploads = 0;
     for (size_t i = 0; i < bodies.size(); ++i) {
@@ -608,14 +691,8 @@ bool World::damage(int slot, dv2 worldPos, float radius, float wobble, uint32_t 
     if (slot < 0 || slot >= (int)bodies.size()) return false;
     Body& b = bodies[slot];
     if (!b.alive || b.f.d.empty()) return false;
-    const v2 lp = b.toLocal(worldPos);
-    if (!fieldCarveDisc(b.f, lp, radius, wobble, rseed)) return false;
-    b.dirty      = true;
-    b.geomDirty  = true;
-    b.authored   = true;
-    b.flash      = 1.0f;
-    b.lastImpact = lp;
-    return true;
+    // One carve routine, so everything that chews rock is journalled in one place.
+    return damageLocal(slot, b.toLocal(worldPos), radius, wobble, rseed);
 }
 
 void World::explode(dv2 c, float carveR, float impulseR, float impulse, uint32_t seed) {
@@ -649,7 +726,16 @@ void World::splitBody(int slot) {
     static std::vector<int> labels;
     const int nc = fieldLabelComponents(b.f, labels);
     if (nc <= 0) { destroy(slot); return; }
-    if (nc == 1) { finalizeBody(slot, true); return; }
+    if (nc == 1) {
+        if (journal && b.netId) {                 // it stayed one rock but its centre of mass moved
+            WorldOp op;
+            op.kind = WorldOp::Settle;
+            op.id = b.netId;
+            ops.push_back(op);
+        }
+        finalizeBody(slot, true);
+        return;
+    }
 
     const dv2   pos    = b.pos;
     const v2    vel    = b.vel;
@@ -660,7 +746,13 @@ void World::splitBody(int slot) {
     const float ca = b.cosA, sa = b.sinA;
     Field parent = std::move(b.f);
     b.f = Field();
+    const uint32_t parentId = journal ? b.netId : 0;
+    splitting = true;
     destroy(slot);
+    splitting = false;
+    uint32_t firstChild = 0;
+    uint8_t  childCount = 0;
+    lastSplitPieces.clear();
 
     Rng rng(hashCombine(sd, (uint64_t)nc * 7919ull));
     for (int c = 0; c < nc; ++c) {
@@ -702,6 +794,12 @@ void World::splitBody(int slot) {
         // Nudge the pieces apart so a fresh cut visibly opens up.
         bodies[ns].vel    += norm(wcom) * rng.range(6.0f, 22.0f);
         bodies[ns].angVel += rng.sym(0.25f);
+        lastSplitPieces.push_back(ns);
+        if (journal) {
+            const uint32_t cid = assignNetId(ns);
+            if (childCount == 0) firstChild = cid;
+            ++childCount;
+        }
 
         WorldEvent e;
         e.pos  = bodies[ns].pos;
@@ -710,6 +808,14 @@ void World::splitBody(int slot) {
         e.kind = WorldEvent::Split;
         e.col  = col;
         if (events.size() < 512) events.push_back(e);
+    }
+    if (journal && parentId) {
+        WorldOp op;
+        op.kind = WorldOp::Split;
+        op.id = parentId;
+        op.firstChild = firstChild;
+        op.children = childCount;
+        ops.push_back(op);
     }
 }
 
@@ -751,4 +857,33 @@ void World::collectRenderData(const Camera& cam, Renderer& r,
             counts.push_back(L.count);
         }
     }
+}
+
+// ------------------------------------------------------- tolerant summary --
+World::FieldSummary World::summarise(int slot) const {
+    FieldSummary s;
+    if (slot < 0 || slot >= (int)bodies.size() || !bodies[slot].alive) return s;
+    const Field& f = bodies[slot].f;
+    double sx = 0, sy = 0;
+    uint32_t n = 0;
+    for (int y = 0; y < f.h; ++y)
+        for (int x = 0; x < f.w; ++x)
+            if (f.at(x, y) > 0.0f) {
+                const v2 p = f.samplePos(x, y);
+                sx += p.x;  sy += p.y;  ++n;
+            }
+    s.solid = n;
+    if (n) {
+        auto q = [](double v) { return (int16_t)std::max(-32000.0, std::min(32000.0, v * 8.0)); };
+        s.cx = q(sx / n);
+        s.cy = q(sy / n);
+    }
+    return s;
+}
+
+bool World::summariesClose(const FieldSummary& a, const FieldSummary& b) {
+    const uint32_t hi = std::max(a.solid, b.solid), lo = std::min(a.solid, b.solid);
+    const uint32_t slack = std::max<uint32_t>(6, hi / 80);              // a few samples, or ~1.25%
+    if (hi - lo > slack) return false;
+    return std::abs((int)a.cx - (int)b.cx) <= 8 && std::abs((int)a.cy - (int)b.cy) <= 8;   // 1 unit
 }

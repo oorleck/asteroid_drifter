@@ -144,6 +144,46 @@ Sounds are placed in the world: louder the nearer they are to the spaceman, and
 panned by where they are on screen. **`M` turns sound off and on.**
 
 
+### Multiplayer (in progress)
+
+The plan is a versus mode: one player hosts, up to a few others join over the
+internet by IP, and everyone shoots everyone. **The networking core exists and
+is tested; the game does not use it yet.** What is done:
+
+* **The world can be replicated.** A rock is a pure function of its radius and
+  seed plus the holes cut in it, so the wire never carries geometry: a rock costs
+  about 48 bytes to introduce and a hole about 22. `World` keeps an optional
+  journal of every shape change (`World::ops`), and `net::HostReplicator` turns it
+  into messages that `net::ClientReplicator` applies to a world that started empty.
+* **Rock motion is dead-reckoned.** There are hundreds of rocks, so the host only
+  sends one when the client's guess has drifted, plus a slow refresh so a lost
+  packet cannot strand a rock. Motion is quantised to 20 bytes a rock.
+* **A small reliable channel over UDP** (`net::Endpoint`): ordered, batched into
+  packets, acknowledgements piggybacked on everything, big messages fragmented,
+  and a resend timer that learns the round trip from echoed timestamps.
+* **Divergence is audited and repaired.** Both sides keep summaries of shot-up
+  rocks (solid-sample count and centroid). A rock that differs by more than noise
+  is sent whole. The summary is deliberately tolerant: an exact hash turned a
+  0.001-unit difference in one carve into 62 repairs and 913 KB.
+
+Measured by `-nettest` between two in-process worlds (the client's world starts
+empty and is built from messages alone), with two people shooting, 5% loss, 60 ms:
+about **5 KB/s** to the client, 33-53 KB to join a 470-rock field, and rocks agree
+exactly at the end. Eight shooters: about 12 KB/s. It also survives 20% loss and
+150 ms, a client deliberately made wrong, and a client whose carves land slightly
+off.
+
+What `-synctest` found, and the reason it works this way: **a seed does not
+determine the world.** Chunk generation asks about the rocks that happen to be
+loaded, so the same chunk reached from two directions holds different rocks (0 of
+9 chunks matched). A joining client cannot generate its own world; the host has to
+send it.
+
+What is *not* done: the game itself (N players, per-player camera and shop, input
+over the wire, client-side prediction, player and bullet replication), the UDP path
+has been written but not yet run between two machines, and nothing here has been
+tried against a different CPU, which is the main remaining risk.
+
 ---
 
 ## Build
@@ -219,6 +259,8 @@ Test harnesses. Each prints `PASS`/`FAIL` (or a summary) and exits:
     -weapontest      homing shell, salvo targeting, force field, blast shield
     -lifetest        lives: losing one, restarting the level, game over, the refill every 5 levels
     -shiptest        warships: schedule, generation, hull, weapons, wreck, retry
+    -synctest        does a seed determine the world? (no: see Multiplayer)
+    -nettest         replicate a shot-up world to an empty one, with loss and latency
     -nosound         start without sound
     -volume V        master volume, 0 to 1.5                     (default 0.8)
     -soundcheck      analyse every synthesised sound and exercise the mixer, no device needed;
@@ -480,6 +522,9 @@ A few notes on what interacts with what:
     src/enemies_fx.cpp the nuke, and drawing for the combat layer
     src/ships.cpp      the generated warships: outline, weapons, hull, wreck, drawing
     src/weapons.cpp    homing shell, salvo, force field, blast shield
+    src/net.h          multiplayer protocol, transport, replication (see Multiplayer)
+    src/net.cpp        UDP link, loopback link, reliable channel, endpoint
+    src/net_world.cpp  turning a World into messages and back
     src/sounds.cpp     the synthesis of every sound
     src/audio.*        the mixer, reverb and Windows waveOut device
     src/audio_game.cpp how game events become sounds; the sounds that last
