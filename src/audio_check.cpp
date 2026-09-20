@@ -19,7 +19,15 @@
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
+#ifdef _WIN32
 #include <windows.h>
+#else
+// The sound harness paces itself in real time; these are the only Windows calls in it.
+#include <chrono>
+#include <thread>
+typedef unsigned long DWORD;
+static inline void Sleep(DWORD ms) { std::this_thread::sleep_for(std::chrono::milliseconds(ms)); }
+#endif
 
 namespace audio {
 namespace {
@@ -215,11 +223,18 @@ int check(const char* prefix) {
     failures = 0;
     printf("soundcheck:\n");
 
+#ifdef _WIN32
     LARGE_INTEGER f0, t0, t1;
     QueryPerformanceFrequency(&f0);  QueryPerformanceCounter(&t0);
     startOffline();
     QueryPerformanceCounter(&t1);
     const double ms = (double)(t1.QuadPart - t0.QuadPart) * 1000.0 / (double)f0.QuadPart;
+#else
+    const auto t0 = std::chrono::steady_clock::now();
+    startOffline();
+    const double ms = std::chrono::duration<double, std::milli>(
+                          std::chrono::steady_clock::now() - t0).count();
+#endif
 
     Bank bank;
     buildBank(bank);

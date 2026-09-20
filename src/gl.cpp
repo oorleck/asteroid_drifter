@@ -1,4 +1,5 @@
 #include "gl.h"
+#ifdef _WIN32
 #include <cstdio>
 
 #define GL_DEFINE(ret, name, params) PFN_##name name = nullptr;
@@ -36,3 +37,4 @@ bool wglLoadExtensions() {
     wglSwapIntervalEXT         = (PFN_wglSwapIntervalEXT)        glGetAny("wglSwapIntervalEXT");
     return wglCreateContextAttribsARB != nullptr;
 }
+#endif  // _WIN32

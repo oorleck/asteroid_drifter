@@ -1,5 +1,7 @@
-// main.cpp -- Win32 window, WGL 3.3 core context, input and the frame loop.
-// No external libraries: everything links against opengl32 and gdi32.
+// main.cpp -- the window, a 3.3 core context, input and the frame loop.
+// Windows: Win32 and WGL, linking only against opengl32 and gdi32.
+// Linux:   SDL2 and GLX, linking against SDL2 and libGL.
+// Everything the game itself does is between platformPump() and swapBuffersNow().
 #include "gl.h"
 #include "game.h"
 #include <cstdio>
@@ -8,13 +10,21 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#ifndef _WIN32
+#include <SDL2/SDL.h>
+#endif
 
 static Input   gInput;
 static bool    gRunning = true;
 static bool    gResized = false;
 static int     gWidth = 1600, gHeight = 900;
 static bool    gFullscreen = false;
+
+#ifdef _WIN32
 static WINDOWPLACEMENT gPrevPlacement = { sizeof(WINDOWPLACEMENT) };
+static HWND    gHwnd  = nullptr;      // set once the window is up; the frame loop
+static HDC     gDC    = nullptr;      // reaches the platform through these, so the
+static HGLRC   gGLRC  = nullptr;      // loop itself has no #ifdefs in it.
 
 static void fatal(const char* msg) {
     fprintf(stderr, "FATAL: %s\n", msg);
@@ -151,6 +161,262 @@ static void bootstrapWgl(HINSTANCE hinst) {
     UnregisterClassA(wc.lpszClassName, hinst);
 }
 
+// ---- what the frame loop calls, so the loop is the same on both platforms --
+
+static void platformInit(bool novsync) {
+    HINSTANCE hinst = GetModuleHandleA(nullptr);
+    SetProcessDPIAware();
+    bootstrapWgl(hinst);
+
+    WNDCLASSA wc = {};
+    wc.lpfnWndProc   = wndProc;
+    wc.hInstance     = hinst;
+    wc.lpszClassName = "AsteroidDrifter";
+    wc.style         = CS_OWNDC;
+    wc.hCursor       = LoadCursor(nullptr, IDC_ARROW);   // for the frame; the client area hides it (WM_SETCURSOR)
+    RegisterClassA(&wc);
+
+    RECT rc = { 0, 0, gWidth, gHeight };
+    AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
+    gHwnd = CreateWindowExA(0, wc.lpszClassName, "Asteroid Drifter",
+                            WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+                            CW_USEDEFAULT, CW_USEDEFAULT,
+                            rc.right - rc.left, rc.bottom - rc.top,
+                            nullptr, nullptr, hinst, nullptr);
+    if (!gHwnd) fatal("CreateWindow failed.");
+    gDC = GetDC(gHwnd);
+
+    const int pfAttribs[] = {
+        WGL_DRAW_TO_WINDOW_ARB, 1,
+        WGL_SUPPORT_OPENGL_ARB, 1,
+        WGL_DOUBLE_BUFFER_ARB,  1,
+        WGL_PIXEL_TYPE_ARB,     WGL_TYPE_RGBA_ARB,
+        WGL_ACCELERATION_ARB,   WGL_FULL_ACCELERATION_ARB,
+        WGL_COLOR_BITS_ARB,     32,
+        WGL_DEPTH_BITS_ARB,     0,
+        WGL_STENCIL_BITS_ARB,   0,
+        0
+    };
+    int  pixelFormat = 0;
+    UINT numFormats  = 0;
+    if (!wglChoosePixelFormatARB(gDC, pfAttribs, nullptr, 1, &pixelFormat, &numFormats) || !numFormats)
+        fatal("No suitable pixel format available.");
+    PIXELFORMATDESCRIPTOR pfd = {};
+    DescribePixelFormat(gDC, pixelFormat, sizeof(pfd), &pfd);
+    SetPixelFormat(gDC, pixelFormat, &pfd);
+
+    const int ctxAttribs[] = {
+        WGL_CONTEXT_MAJOR_VERSION_ARB, 3,
+        WGL_CONTEXT_MINOR_VERSION_ARB, 3,
+        WGL_CONTEXT_PROFILE_MASK_ARB,  WGL_CONTEXT_CORE_PROFILE_BIT_ARB,
+        0
+    };
+    gGLRC = wglCreateContextAttribsARB(gDC, nullptr, ctxAttribs);
+    if (!gGLRC) fatal("Could not create an OpenGL 3.3 core context.");
+    wglMakeCurrent(gDC, gGLRC);
+    if (!glLoadCoreFunctions()) fatal("Missing required OpenGL 3.3 entry points.");
+    if (wglSwapIntervalEXT) wglSwapIntervalEXT(novsync ? 0 : 1);
+
+    RECT cr;
+    GetClientRect(gHwnd, &cr);
+    gWidth  = cr.right - cr.left;
+    gHeight = cr.bottom - cr.top;
+}
+
+static void platformPump() {
+    MSG msg;
+    while (PeekMessageA(&msg, nullptr, 0, 0, PM_REMOVE)) {
+        TranslateMessage(&msg);
+        DispatchMessageA(&msg);
+    }
+}
+
+static void swapBuffersNow()        { SwapBuffers(gDC); }
+static void toggleFullscreenNow()   { toggleFullscreen(gHwnd); }
+static void sleepMs(int ms)         { Sleep((DWORD)ms); }
+static bool setVsync(bool on)       { if (!wglSwapIntervalEXT) return false; wglSwapIntervalEXT(on ? 1 : 0); return true; }
+
+static double nowSeconds() {
+    LARGE_INTEGER freq, c;
+    QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&c);
+    return (double)c.QuadPart / (double)freq.QuadPart;
+}
+
+static void platformShutdown() {
+    wglMakeCurrent(nullptr, nullptr);
+    wglDeleteContext(gGLRC);
+    ReleaseDC(gHwnd, gDC);
+    DestroyWindow(gHwnd);
+}
+
+#else   // ---------------------------------------------------------- SDL2 ---
+
+static SDL_Window*   gWin = nullptr;
+static SDL_GLContext gCtx = nullptr;
+
+static void fatal(const char* msg) {
+    fprintf(stderr, "FATAL: %s\n", msg);
+    if (SDL_WasInit(SDL_INIT_VIDEO))
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Asteroid Drifter", msg, gWin);
+    exit(1);
+}
+
+// The game indexes its key tables with Windows virtual-key codes, so the SDL keys it
+// cares about are translated back into those. Letters and digits already agree.
+static int vkFromKey(const SDL_Keysym& k) {
+    switch (k.sym) {
+        case SDLK_RETURN: case SDLK_KP_ENTER: return VK_RETURN;
+        case SDLK_ESCAPE:                     return VK_ESCAPE;
+        case SDLK_SPACE:                      return VK_SPACE;
+        case SDLK_LEFT:                       return VK_LEFT;
+        case SDLK_UP:                         return VK_UP;
+        case SDLK_RIGHT:                      return VK_RIGHT;
+        case SDLK_DOWN:                       return VK_DOWN;
+        case SDLK_LALT:                       return VK_LMENU;
+        case SDLK_RALT:                       return VK_RMENU;
+        case SDLK_LSHIFT:                     return VK_LSHIFT;
+        case SDLK_RSHIFT:                     return VK_RSHIFT;
+        case SDLK_F1:                         return VK_F1;
+        case SDLK_F4:                         return VK_F4;
+        case SDLK_F11:                        return VK_F11;
+        case SDLK_F12:                        return VK_F12;
+        default: break;
+    }
+    if (k.sym >= SDLK_a && k.sym <= SDLK_z) return 'A' + (k.sym - SDLK_a);   // 'A'..'Z', as Windows reports them
+    if (k.sym >= SDLK_0 && k.sym <= SDLK_9) return '0' + (k.sym - SDLK_0);
+    return -1;
+}
+
+// Windows keeps VK_SHIFT and VK_MENU set whenever either side is down; the game reads
+// both the sided and the unsided codes, so they are kept in step here.
+static void syncModifiers() {
+    gInput.down[VK_SHIFT] = gInput.down[VK_LSHIFT] || gInput.down[VK_RSHIFT];
+    gInput.down[VK_MENU]  = gInput.down[VK_LMENU]  || gInput.down[VK_RMENU];
+}
+
+static void platformInit(bool novsync) {
+    if (SDL_Init(SDL_INIT_VIDEO) != 0) fatal(SDL_GetError());
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+    SDL_GL_SetAttribute(SDL_GL_RED_SIZE,   8);
+    SDL_GL_SetAttribute(SDL_GL_GREEN_SIZE, 8);
+    SDL_GL_SetAttribute(SDL_GL_BLUE_SIZE,  8);
+    SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 8);
+    SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);
+    SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 0);
+
+    gWin = SDL_CreateWindow("Asteroid Drifter",
+                            SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+                            gWidth, gHeight,
+                            SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
+    if (!gWin) fatal(SDL_GetError());
+    gCtx = SDL_GL_CreateContext(gWin);
+    if (!gCtx) fatal("Could not create an OpenGL 3.3 core context.");
+    SDL_GL_MakeCurrent(gWin, gCtx);
+    if (!glLoadCoreFunctions()) fatal("Missing required OpenGL 3.3 entry points.");
+    SDL_GL_SetSwapInterval(novsync ? 0 : 1);
+    SDL_ShowCursor(SDL_DISABLE);          // the game draws its own target
+
+    // The drawable can be larger than the window on a HiDPI screen; the renderer works
+    // in drawable pixels, and so does Input::mousePx, so mouse positions are scaled.
+    SDL_GL_GetDrawableSize(gWin, &gWidth, &gHeight);
+}
+
+// Mouse coordinates arrive in window points; the renderer thinks in drawable pixels.
+static void mouseTo(int x, int y) {
+    int ww = 1, wh = 1, dw = 1, dh = 1;
+    SDL_GetWindowSize(gWin, &ww, &wh);
+    SDL_GL_GetDrawableSize(gWin, &dw, &dh);
+    gInput.mousePx = v2((float)x * (float)dw / (float)(ww ? ww : 1),
+                        (float)y * (float)dh / (float)(wh ? wh : 1));
+}
+
+static void platformPump() {
+    SDL_Event e;
+    while (SDL_PollEvent(&e)) {
+        switch (e.type) {
+            case SDL_QUIT:
+                gRunning = false;
+                break;
+            case SDL_WINDOWEVENT:
+                if (e.window.event == SDL_WINDOWEVENT_SIZE_CHANGED ||
+                    e.window.event == SDL_WINDOWEVENT_RESIZED) {
+                    SDL_GL_GetDrawableSize(gWin, &gWidth, &gHeight);
+                    gResized = true;
+                } else if (e.window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
+                    // A key held as focus goes elsewhere would stick down for ever
+                    // (a raised shield that never drops), since the key-up is delivered
+                    // to the other window.
+                    memset(gInput.down, 0, sizeof gInput.down);
+                    gInput.mouse[0] = gInput.mouse[1] = gInput.mouse[2] = false;
+                }
+                break;
+            case SDL_KEYDOWN: {
+                if (e.key.repeat) break;
+                const int vk = vkFromKey(e.key.keysym);
+                if (vk >= 0 && vk < 256) {
+                    if (!gInput.down[vk]) gInput.pressed[vk] = true;
+                    gInput.down[vk] = true;
+                    syncModifiers();
+                }
+                if (vk == VK_ESCAPE) gRunning = false;
+                if (vk == VK_F4 && (e.key.keysym.mod & KMOD_ALT)) gRunning = false;
+                break;
+            }
+            case SDL_KEYUP: {
+                const int vk = vkFromKey(e.key.keysym);
+                if (vk >= 0 && vk < 256) { gInput.down[vk] = false; syncModifiers(); }
+                break;
+            }
+            case SDL_MOUSEMOTION:
+                mouseTo(e.motion.x, e.motion.y);
+                break;
+            case SDL_MOUSEBUTTONDOWN:
+            case SDL_MOUSEBUTTONUP: {
+                int b = -1;
+                if      (e.button.button == SDL_BUTTON_LEFT)   b = 0;
+                else if (e.button.button == SDL_BUTTON_RIGHT)  b = 1;
+                else if (e.button.button == SDL_BUTTON_MIDDLE) b = 2;
+                if (b < 0) break;
+                if (e.type == SDL_MOUSEBUTTONDOWN) {
+                    if (!gInput.mouse[b]) gInput.mousePressed[b] = true;
+                    gInput.mouse[b] = true;
+                } else {
+                    gInput.mouse[b] = false;
+                }
+                break;
+            }
+            case SDL_MOUSEWHEEL:
+                gInput.wheel += (e.wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -1.0f : 1.0f) * (float)e.wheel.y;
+                break;
+            default: break;
+        }
+    }
+}
+
+static void swapBuffersNow()      { SDL_GL_SwapWindow(gWin); }
+static void sleepMs(int ms)       { SDL_Delay((Uint32)ms); }
+static bool setVsync(bool on)     { return SDL_GL_SetSwapInterval(on ? 1 : 0) == 0; }
+static double nowSeconds()        { return (double)SDL_GetPerformanceCounter() / (double)SDL_GetPerformanceFrequency(); }
+
+static void toggleFullscreenNow() {
+    gFullscreen = !gFullscreen;
+    SDL_SetWindowFullscreen(gWin, gFullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+    SDL_GL_GetDrawableSize(gWin, &gWidth, &gHeight);
+    gResized = true;
+}
+
+static void platformShutdown() {
+    SDL_GL_DeleteContext(gCtx);
+    SDL_DestroyWindow(gWin);
+    SDL_Quit();
+}
+
+#endif  // _WIN32
+
 int main(int argc, char** argv) {
     uint64_t seed = 0x5EEDFACEull;
     bool wantFullscreen = false;
@@ -211,67 +477,11 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "-selftest")) { selftest = true; if (frameLimit == 0) frameLimit = 900; }
     }
 
-    HINSTANCE hinst = GetModuleHandleA(nullptr);
-    SetProcessDPIAware();
-    bootstrapWgl(hinst);
-
-    WNDCLASSA wc = {};
-    wc.lpfnWndProc   = wndProc;
-    wc.hInstance     = hinst;
-    wc.lpszClassName = "AsteroidDrifter";
-    wc.style         = CS_OWNDC;
-    wc.hCursor       = LoadCursor(nullptr, IDC_ARROW);   // for the frame; the client area hides it (WM_SETCURSOR)
-    RegisterClassA(&wc);
-
-    RECT rc = { 0, 0, gWidth, gHeight };
-    AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
-    HWND hwnd = CreateWindowExA(0, wc.lpszClassName, "Asteroid Drifter",
-                                WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-                                CW_USEDEFAULT, CW_USEDEFAULT,
-                                rc.right - rc.left, rc.bottom - rc.top,
-                                nullptr, nullptr, hinst, nullptr);
-    if (!hwnd) fatal("CreateWindow failed.");
-    HDC dc = GetDC(hwnd);
-
-    const int pfAttribs[] = {
-        WGL_DRAW_TO_WINDOW_ARB, 1,
-        WGL_SUPPORT_OPENGL_ARB, 1,
-        WGL_DOUBLE_BUFFER_ARB,  1,
-        WGL_PIXEL_TYPE_ARB,     WGL_TYPE_RGBA_ARB,
-        WGL_ACCELERATION_ARB,   WGL_FULL_ACCELERATION_ARB,
-        WGL_COLOR_BITS_ARB,     32,
-        WGL_DEPTH_BITS_ARB,     0,
-        WGL_STENCIL_BITS_ARB,   0,
-        0
-    };
-    int  pixelFormat = 0;
-    UINT numFormats  = 0;
-    if (!wglChoosePixelFormatARB(dc, pfAttribs, nullptr, 1, &pixelFormat, &numFormats) || !numFormats)
-        fatal("No suitable pixel format available.");
-    PIXELFORMATDESCRIPTOR pfd = {};
-    DescribePixelFormat(dc, pixelFormat, sizeof(pfd), &pfd);
-    SetPixelFormat(dc, pixelFormat, &pfd);
-
-    const int ctxAttribs[] = {
-        WGL_CONTEXT_MAJOR_VERSION_ARB, 3,
-        WGL_CONTEXT_MINOR_VERSION_ARB, 3,
-        WGL_CONTEXT_PROFILE_MASK_ARB,  WGL_CONTEXT_CORE_PROFILE_BIT_ARB,
-        0
-    };
-    HGLRC glrc = wglCreateContextAttribsARB(dc, nullptr, ctxAttribs);
-    if (!glrc) fatal("Could not create an OpenGL 3.3 core context.");
-    wglMakeCurrent(dc, glrc);
-    if (!glLoadCoreFunctions()) fatal("Missing required OpenGL 3.3 entry points.");
-    if (wglSwapIntervalEXT) wglSwapIntervalEXT(novsync ? 0 : 1);
+    platformInit(novsync);
 
     printf("GL %s | %s\n", (const char*)glGetString(GL_VERSION),
                            (const char*)glGetString(GL_RENDERER));
     fflush(stdout);
-
-    RECT cr;
-    GetClientRect(hwnd, &cr);
-    gWidth  = cr.right - cr.left;
-    gHeight = cr.bottom - cr.top;
 
     static Renderer renderer;
     if (!renderer.init(gWidth, gHeight))
@@ -287,7 +497,7 @@ int main(int argc, char** argv) {
     if (povCam) game.povCamera = true;
     game.init(renderer, seed);
     if (zoomArg > 0) { game.zoomTarget = zoomArg; game.cam.halfW = zoomArg; }
-    if (wantFullscreen) toggleFullscreen(hwnd);
+    if (wantFullscreen) toggleFullscreenNow();
 
     // ---- helpers shared by the gameplay tests -----------------------------
     // The cursor position that makes the player aim at a world point.
@@ -843,7 +1053,7 @@ int main(int argc, char** argv) {
             check(plays(Sfx::ExplodeM) > before, "a bigger blast makes the bigger sound");
         }
         {
-            Sleep(120);                                    // the sounds have minimum gaps, measured in real time
+            sleepMs(120);                                    // the sounds have minimum gaps, measured in real time
             const uint32_t s0 = plays(Sfx::RockSplit), h0 = plays(Sfx::RockHit);
             WorldEvent e;  e.kind = WorldEvent::Split;  e.pos = game.pl.pos;
             game.world.events.push_back(e);
@@ -2261,9 +2471,7 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    LARGE_INTEGER freq, prev;
-    QueryPerformanceFrequency(&freq);
-    QueryPerformanceCounter(&prev);
+    double prev = nowSeconds();
     long long frameNo = 0;
     double    totalMs = 0;
     double    worstMs = 0;
@@ -2278,11 +2486,7 @@ int main(int argc, char** argv) {
 
     while (gRunning) {
         gInput.newFrame();
-        MSG msg;
-        while (PeekMessageA(&msg, nullptr, 0, 0, PM_REMOVE)) {
-            TranslateMessage(&msg);
-            DispatchMessageA(&msg);
-        }
+        platformPump();
         if (!gRunning) break;
         if (keyLog) {
             // Prints every change of the keys that matter, and a heartbeat, so a real
@@ -2297,16 +2501,15 @@ int main(int argc, char** argv) {
             fflush(stdout);
         }
 
-        if (gInput.pressed[VK_F11]) toggleFullscreen(hwnd);
-        if (gInput.pressed['V'] && wglSwapIntervalEXT) { vsync = !vsync; wglSwapIntervalEXT(vsync ? 1 : 0); }
+        if (gInput.pressed[VK_F11]) toggleFullscreenNow();
+        if (gInput.pressed['V']) { vsync = !vsync; setVsync(vsync); }
         if (gInput.pressed['B']) renderer.bloomAmount = renderer.bloomAmount > 0.5f ? 0.0f : 1.0f;
         if (gInput.pressed['T']) renderer.lineWeight  = renderer.lineWeight  > 1.3f ? 1.0f : 1.7f;
 
         if (gResized) { renderer.resize(gWidth, gHeight); gResized = false; }
 
-        LARGE_INTEGER now;
-        QueryPerformanceCounter(&now);
-        float dt = (float)((double)(now.QuadPart - prev.QuadPart) / (double)freq.QuadPart);
+        const double now = nowSeconds();
+        float dt = (float)(now - prev);
         prev = now;
         game.frameMs = dt * 1000.0f;
         dt = clampf(dt, 1.0f / 1000.0f, 1.0f / 30.0f);
@@ -2338,7 +2541,7 @@ int main(int argc, char** argv) {
         game.render(renderer);
         if (gInput.pressed[VK_F12] || (shotFrame && frameNo + 1 == shotFrame))
             renderer.screenshot(shotPath);
-        SwapBuffers(dc);
+        swapBuffersNow();
         ++frameNo;
         totalMs += game.frameMs;
         if (frameNo > 8 && game.frameMs > worstMs) worstMs = game.frameMs;
@@ -2356,9 +2559,6 @@ int main(int argc, char** argv) {
     fflush(stdout);
     audio::shutdown();
     renderer.shutdown();
-    wglMakeCurrent(nullptr, nullptr);
-    wglDeleteContext(glrc);
-    ReleaseDC(hwnd, dc);
-    DestroyWindow(hwnd);
+    platformShutdown();
     return 0;
 }

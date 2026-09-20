@@ -1,5 +1,6 @@
 // gl.h -- minimal self-contained OpenGL 3.3 core loader (no GLEW/GLAD needed).
 #pragma once
+#ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -14,6 +15,16 @@
 typedef char        GLchar;
 typedef ptrdiff_t   GLsizeiptr;
 typedef ptrdiff_t   GLintptr;
+#else
+// On Linux libGL exports every entry point up to 4.6, so there is nothing to load:
+// the prototypes in glext.h are the real functions and the loader below is skipped.
+#define GL_GLEXT_PROTOTYPES 1
+#include <GL/gl.h>
+#include <GL/glext.h>
+#include "keys.h"
+#include <cstddef>
+#include <cstdint>
+#endif
 
 // ---- enums not present in the ancient Windows gl.h -------------------------
 #ifndef GL_ARRAY_BUFFER
@@ -181,6 +192,7 @@ X(void,    glMultiDrawArrays,   (GLenum, const GLint*, const GLsizei*, GLsizei))
 X(void,    glBlendEquation,     (GLenum)) \
 X(void,    glBlendFuncSeparate, (GLenum, GLenum, GLenum, GLenum))
 
+#ifdef _WIN32
 #define GL_DECLARE(ret, name, params) typedef ret (APIENTRY *PFN_##name) params; extern PFN_##name name;
 GL_FUNCTION_LIST(GL_DECLARE)
 #undef GL_DECLARE
@@ -195,3 +207,6 @@ extern PFN_wglSwapIntervalEXT         wglSwapIntervalEXT;
 
 bool glLoadCoreFunctions();      // after a context is current
 bool wglLoadExtensions();        // needs a dummy context current
+#else
+inline bool glLoadCoreFunctions() { return true; }   // linked, not loaded
+#endif
