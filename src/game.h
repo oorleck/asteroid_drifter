@@ -39,10 +39,10 @@ namespace tune {
     static const float WALK_SPEED  = 0.0f;
     static const float WALK_ACCEL  = 1500.0f;
     static const float AIR_ACCEL   = 0.0f;
-    static const float JUMP_SPEED  = 260.0f;
+    static const float JUMP_SPEED  = 450.3f;   // 260 x sqrt(3): three times the height at the same gravity
     static const float JUMP_MIN_LIFT = 0.17f;  // a jump leaves the ground at least this far (sine, about 10 degrees) off the surface
     static const float THRUST      = 562.5f;   // 25% weaker than the 750 it was
-    static const float FUEL_MAX    = 40.0f;    // the tank (it was 100, then 80); burn and regen are unchanged, so the duty cycle is too: 1.6 s of burn from full
+    static const float FUEL_MAX    = 32.0f;    // the tank (it was 100, 80, 40); burn and regen are unchanged, so the duty cycle is too: 1.3 s of burn from full
     static const float FUEL_BURN   = 25.0f;
     static const float FUEL_REGEN  = 18.7f;    // 15% slower than the 22 it was
     static const float FUEL_RESTART = 12.0f;   // after running dry, fuel needed before the rocket relights
@@ -199,6 +199,9 @@ struct Enemy {
     // A hardpoint belongs to a warship: which one, which ShipWeapon::Type, how slowly it fires, its colour.
     int   shipId = 0, weapon = 0;
     float cdScale = 1;
+    float power = 1, speedMul = 1;   // a hardpoint's damage and bullet speed relative to the level's
+    int   shotsBonus = 0;            // and its burst length relative to the level's
+    float beamHit = 0;               // a laser's timer between the ticks of damage it does
     Col   tint;
     uint32_t seed = 0;
 };
@@ -222,10 +225,13 @@ struct Missile {
 // A weapon bolted to a warship. It is an Enemy (kind Hardpoint) in every sense (bullets hit it,
 // blasts hurt it, homing weapons lock onto it); the ship only decides where it is.
 struct ShipWeapon {
-    enum Type { Gun, Missile, Flak, Cannon };
+    enum Type { Gun, Missile, Flak, Cannon, Laser };
     Type   type = Gun;
     v2     local;                  // position in the hull's frame, +x toward the nose
     int    enemyId = 0;
+    // Variation, so no two ships (or pairs of guns) fire alike: how often, how hard, how fast, how long a burst.
+    float  rate = 1.0f, power = 1.0f, speed = 1.0f;
+    int    shots = 0;              // extra rounds in a gun's burst (may be negative)
 };
 
 // A big generated warship: an outline, a colour, a name and a set of weapons. It
@@ -487,6 +493,8 @@ struct Game {
     void spawnShip();                              // puts level.ship into play, weapons and all
     void updateShips(float dt);
     void updateShipWeapon(Ship& s, Enemy& e, float dt);
+    void updateLaser(Ship& s, Enemy& e, float dt);
+    void drawLaserBeams(Renderer& r);
     void fireShipBullet(const Enemy& e, dv2 muzzle, float ang, float speedMul, float dmgMul, float size, float life);
     Ship* findShip(int id);
     Ship* shipAt(dv2 p);                           // the ship whose hull contains p, if any

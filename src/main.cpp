@@ -167,7 +167,7 @@ int main(int argc, char** argv) {
     bool persistTest = false;
     bool rocketTest = false;
     bool bulletTest = false;
-    bool walkTest = false, jumpTest = false, rangeTest = false, spinTest = false;
+    bool walkTest = false, jumpTest = false, rangeTest = false, spinTest = false, laserTest = false;
     bool sandboxMode = false, levelTest = false, nukeTest = false, enemyTest = false;
     bool peaceful = false, allItemsArg = false;
     bool showcase = false, shipGallery = false;
@@ -223,6 +223,7 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "-jumptest"))             jumpTest = true;
         else if (!strcmp(argv[i], "-rangetest"))            rangeTest = true;
         else if (!strcmp(argv[i], "-spintest"))             spinTest = true;
+        else if (!strcmp(argv[i], "-lasertest"))            laserTest = true;
         else if (!strcmp(argv[i], "-bullettest"))           bulletTest = true;
         else if (!strcmp(argv[i], "-rockettest"))           rocketTest = true;
         else if (!strcmp(argv[i], "-persisttest"))          persistTest = true;
@@ -3778,6 +3779,227 @@ int main(int argc, char** argv) {
         return 0;
     }
 
+    if (laserTest) {
+        printf("lasertest:\n");
+        const float dt = 1.0f / 60.0f;
+        Input idle;
+        int failures = 0;
+        auto check = [&](bool ok, const char* what) {
+            printf("  %-80s %s\n", what, ok ? "ok" : "FAIL");
+            if (!ok) ++failures;
+        };
+        game.startRun(renderer);
+        game.invincible = false;
+        game.floating = true;
+        game.startLevel(4);
+        game.level.slots.clear();
+        const dv2 C(6000.0, 6000.0);
+        openSpot(C);
+        const Difficulty D = game.level.diff;
+
+        // ---- the small changes
+        check(std::fabs(rules::SHIP_FIRE_SLOW * 3.0f - 1.35f) < 1e-4f, "warship guns fire three times as often as they did (1.35 -> 0.45)");
+        {
+            Rng a(1), b(1);
+            const Difficulty d1 = makeDifficulty(6, a);
+            const float was = std::max(0.03f, 0.17f - 0.011f * 6.0f);
+            (void)b;
+            printf("      enemy scatter at level 6: %.3f (it was %.3f)\n", d1.aimError, was);
+            check(std::fabs(d1.aimError - 0.5f * was) < 1e-4f, "enemy shots scatter half as much as they did");
+        }
+
+        // ---- warships: variety, and how many carry the ray
+        int withLaser = 0, ships = 0, multipleLasers = 0, laserAtBow = 0;
+        float rateLo = 9, rateHi = 0, powLo = 9, powHi = 0, spdLo = 9, spdHi = 0;
+        int shotsLo = 9, shotsHi = -9;
+        float gunShareLo = 1, gunShareHi = 0;
+        int typeCount[5] = { 0, 0, 0, 0, 0 };
+        for (uint64_t seed = 1; seed <= 300; ++seed) {
+            Ship sh;
+            generateShip(sh, seed * 2654435761ull, 4, D);
+            ++ships;
+            int lasers = 0, guns = 0, others = 0;
+            for (const ShipWeapon& w : sh.weapons) {
+                ++typeCount[(int)w.type];
+                if (w.type == ShipWeapon::Laser) { ++lasers; if (w.local.x > 0.3f * sh.radius && std::fabs(w.local.y) < 1.0f) ++laserAtBow; continue; }
+                (w.type == ShipWeapon::Gun ? guns : others)++;
+                rateLo = std::min(rateLo, w.rate);  rateHi = std::max(rateHi, w.rate);
+                powLo = std::min(powLo, w.power);   powHi = std::max(powHi, w.power);
+                spdLo = std::min(spdLo, w.speed);   spdHi = std::max(spdHi, w.speed);
+                if (w.type == ShipWeapon::Gun) { shotsLo = std::min(shotsLo, w.shots); shotsHi = std::max(shotsHi, w.shots); }
+            }
+            if (lasers) ++withLaser;
+            if (lasers > 1) ++multipleLasers;
+            if (guns + others > 0) {
+                const float gs = (float)guns / (guns + others);
+                gunShareLo = std::min(gunShareLo, gs);  gunShareHi = std::max(gunShareHi, gs);
+            }
+        }
+        printf("      300 warships: %d carry the ray (%.0f%%); weapon rate %.2f-%.2f, power %.2f-%.2f, speed %.2f-%.2f, gun burst %+d to %+d\n",
+               withLaser, 100.0 * withLaser / ships, rateLo, rateHi, powLo, powHi, spdLo, spdHi, shotsLo, shotsHi);
+        printf("      weapons made: %d guns, %d missile pods, %d flak, %d cannon, %d rays; the share of guns on a ship runs from %.0f%% to %.0f%%\n",
+               typeCount[0], typeCount[1], typeCount[2], typeCount[3], typeCount[4], 100.0f * gunShareLo, 100.0f * gunShareHi);
+        check(withLaser > ships * 0.30 && withLaser < ships * 0.60, "some warships carry the ray (about 45%), and not all");
+        check(multipleLasers == 0, "never more than one ray on a ship");
+        check(laserAtBow == withLaser, "and it sits on the bow");
+        check(rateHi / rateLo > 1.8f, "weapons fire at different rates");
+        check(powHi / powLo > 1.5f, "and hit with different strength");
+        check(spdHi / spdLo > 1.25f, "and their rounds fly at different speeds");
+        check(shotsHi - shotsLo >= 3, "and the guns fire bursts of different length");
+        check(gunShareHi - gunShareLo > 0.6f, "some ships are mostly guns and some hardly any: each has its own doctrine");
+        check(typeCount[1] > 50 && typeCount[2] > 50 && typeCount[3] > 50, "and every kind of weapon turns up");
+
+        // ---- one ship with the ray, and only the ray, in front of a player who stays put
+        Ship base;
+        {
+            bool found = false;
+            for (uint64_t seed = 1; seed < 500 && !found; ++seed) {
+                generateShip(base, seed * 7919ull, 4, D);
+                for (const ShipWeapon& w : base.weapons) if (w.type == ShipWeapon::Laser) found = true;
+            }
+            check(found, "a ship with the ray to test");
+        }
+        auto stage = [&](float playerY) {
+            game.bullets.clear();  game.ebullets.clear();  game.missiles.clear();  game.pmissiles.clear();  game.enemies.clear();  game.ships.clear();
+            game.waves.clear();
+            base.anchor = C;  base.pos = C;  base.baseAngle = 0.0f;  base.angle = 0.0f;
+            game.level.ship = base;
+            game.spawnShip();
+            Ship& s = game.ships.back();
+            Enemy* laser = nullptr;
+            for (ShipWeapon& w : s.weapons) {
+                Enemy* e = game.findEnemy(w.enemyId);
+                if (!e) continue;
+                if (w.type == ShipWeapon::Laser) laser = e; else e->alive = false;     // only the ray
+            }
+            if (laser) laser->gunCd = 0.0f;
+            game.pl.pos = dv2(C.x + s.radius + 800.0, C.y + playerY);
+            game.pl.vel = v2(0, 0);
+            game.pl.health = 100.0f;
+            game.pl.protect = 0.0f;
+            return laser ? laser->id : 0;
+        };
+        auto hold = [&](dv2 at) { game.pl.pos = at;  game.pl.vel = v2(0, 0); };
+
+        // The timeline: charge, ray, recharge.
+        {
+            const int id = stage(0.0f);
+            const dv2 at = game.pl.pos;
+            double tCharge = -1, tFire = -1, tEnd = -1, tNext = -1;
+            float healthAtFire = 0.0f, healthAfter = 0.0f;
+            bool hurtBeforeFire = false;
+            int prev = 0;
+            int shieldOn = 0;
+            for (int i = 0; i < 60 * 14; ++i) {
+                hold(at);
+                game.pl.hasShield = true;  game.pl.shield = rules::SHIELD_CAPACITY;  game.pl.shieldUp = true;  ++shieldOn;
+                game.update(renderer, idle, dt);
+                const Enemy* e = game.findEnemy(id);
+                if (!e) break;
+                const double now = i * (double)dt;
+                if (e->burst == 1 && prev != 1 && tCharge < 0) tCharge = now;
+                if (e->burst == 1 && tFire < 0 && game.pl.health < 100.0f) hurtBeforeFire = true;
+                if (e->burst == 2 && prev != 2 && tFire < 0) { tFire = now; healthAtFire = game.pl.health; }
+                if (e->burst == 0 && prev == 2 && tEnd < 0) { tEnd = now; healthAfter = game.pl.health; }
+                if (e->burst == 1 && tEnd >= 0 && prev == 0 && tNext < 0) tNext = now;
+                prev = e->burst;
+                if (tNext >= 0) break;
+            }
+            printf("      charge starts at %.2f s, the ray at %.2f s (%.2f s later), off at %.2f s, next charge at %.2f s (%.2f s after the ray went out)\n",
+                   tCharge, tFire, tFire - tCharge, tEnd, tNext, tNext - tEnd);
+            check(tCharge >= 0 && tFire >= 0, "it starts to shoot when you are in range, and the ray comes");
+            check(std::fabs((tFire - tCharge) - rules::LASER_CHARGE) < 0.06, "2 seconds from starting to shoot until the ray fires");
+            check(std::fabs((tEnd - tFire) - rules::LASER_FIRE_TIME) < 0.08, "and the ray stays on for under a second");
+            check(tNext >= 0 && std::fabs((tNext - tEnd) - rules::LASER_RECHARGE) < 0.1, "7 seconds to recharge before it can start again");
+            check(!hurtBeforeFire, "the charging line does no harm");
+            printf("      suit lost to one ray: %.0f (with the shield up)\n", healthAtFire - healthAfter);
+            check(healthAtFire - healthAfter >= 60.0f, "standing in the ray hurts badly, whatever shield is up");
+        }
+        // Moving out of the line in the last moment is the defence.
+        {
+            const int id = stage(0.0f);
+            const dv2 at = game.pl.pos;
+            bool moved = false;
+            for (int i = 0; i < 60 * 5; ++i) {
+                const Enemy* e = game.findEnemy(id);
+                if (e && e->burst == 1 && e->burstCd < rules::LASER_LOCK * 0.6f) moved = true;
+                hold(moved ? dv2(at.x, at.y + 220.0) : at);
+                game.update(renderer, idle, dt);
+                if (e && e->burst == 0 && moved) break;
+            }
+            check(moved && game.pl.health >= 100.0f, "stepping 220 units aside after it locks means the ray misses you");
+        }
+        // It cuts through rock, near and far, and through shots and missiles.
+        {
+            const int id = stage(0.0f);
+            const dv2 at = game.pl.pos;
+            const float R = game.ships.back().radius;
+            const dv2 nearRock(C.x + R + 350.0, C.y), farRock(C.x + R + 1800.0, C.y + 3.0);
+            const int sn = game.world.spawn(nearRock, 70.0f, 4242u);
+            const int sf = game.world.spawn(farRock, 70.0f, 4243u);
+            game.world.step(dt, C);
+            auto solid = [&](int slot) { return slot >= 0 && game.world.bodies[slot].alive ? game.world.summarise(slot).solid : 0u; };
+            const uint32_t nb = solid(sn), fb = solid(sf);
+            // and something in flight, put in the line as the ray comes on
+            const double seedX = C.x + R + 1000.0;
+            auto shotThere = [&]() {
+                for (const EnemyBullet& b : game.ebullets) if (std::fabs(b.pos.x - seedX) < 3.0 && b.life > 0.0f) return true;
+                return false;
+            };
+            bool seeded = false;  int since = -1;  bool goneAfter = false;
+            for (int i = 0; i < 60 * 4; ++i) {
+                const Enemy* e = game.findEnemy(id);
+                if (e && e->burst == 2 && !seeded) {
+                    seeded = true;  since = 0;
+                    EnemyBullet eb;  eb.pos = dv2(seedX, C.y + 6.0);  eb.vel = v2(0, 0);  eb.life = 5.0f;
+                    game.ebullets.push_back(eb);
+                }
+                hold(at);
+                game.update(renderer, idle, dt);
+                if (seeded && ++since == 3) goneAfter = !shotThere();
+                if (e && e->burst == 0 && seeded) break;
+            }
+            const uint32_t na = solid(sn), fa = solid(sf);
+            printf("      near rock %u -> %u samples, far rock (past you) %u -> %u; a stationary shot in the ray is %s\n",
+                   nb, na, fb, fa, goneAfter ? "gone" : "still there");
+            check(nb > 0 && na < nb * 0.7, "the ray cuts a slot through a rock in front of you");
+            check(fb > 0 && fa < fb * 0.7, "and through a rock far behind you: it cuts through everything");
+            check(seeded && goneAfter, "and a shot caught in the ray is gone");
+        }
+        // Pictures: the sight line while it charges, the ray, and the ray through rock.
+        if (shotPath && shotPath[0]) {
+            const int id = stage(0.0f);
+            const dv2 at = game.pl.pos;
+            const float R = game.ships.back().radius;
+            game.world.spawn(dv2(C.x + R + 350.0, C.y - 20.0), 90.0f, 4242u);
+            game.world.step(dt, C);
+            game.zoomTarget = 900.0f;
+            int shot = 0;
+            for (int i = 0; i < 60 * 4 && shot < 3; ++i) {
+                hold(at);
+                game.update(renderer, idle, dt);
+                const Enemy* e = game.findEnemy(id);
+                if (!e) break;
+                const bool want = (shot == 0 && e->burst == 1 && e->burstCd < 1.0f && e->burstCd > 0.8f)
+                               || (shot == 1 && e->burst == 1 && e->burstCd < rules::LASER_LOCK * 0.5f)
+                               || (shot == 2 && e->burst == 2 && e->burstCd < rules::LASER_FIRE_TIME - 0.25f);
+                if (want) {
+                    game.cam.pos = dv2(C.x + R * 0.6 + 350.0, C.y);
+                    game.cam.halfW = 900.0f;
+                    game.render(renderer);
+                    char path[512];
+                    snprintf(path, sizeof path, "%s_laser%d.png", shotPath, shot);
+                    renderer.screenshot(path);
+                    ++shot;
+                }
+            }
+        }
+        printf("lasertest: %s\n", failures == 0 ? "PASS" : "FAIL");
+        fflush(stdout);
+        renderer.shutdown();
+        return 0;
+    }
+
     if (rangeTest) {
         printf("rangetest:\n");
         const float dt = 1.0f / 60.0f;
@@ -3961,7 +4183,7 @@ int main(int argc, char** argv) {
         p += n0 * 9.0f;
 
         printf("jumptest: the tank holds %.0f, was 100; gravity constant %.0f, was 100\n", tune::FUEL_MAX, cfg::GRAV_CONST);
-        check(tune::FUEL_MAX == 40.0f && game.pl.fuel == tune::FUEL_MAX, "the fuel tank is at 40 and starts full");
+        check(tune::FUEL_MAX == 32.0f && game.pl.fuel == tune::FUEL_MAX, "the fuel tank is at 32 (20% smaller again) and starts full");
         check(std::fabs(tune::THRUST - 562.5f) < 0.01f, "the rocket is 25% weaker than the 750 it was");
         check(std::fabs(cfg::GRAV_CONST - 258.75f) < 0.01f, "gravity is 15% stronger again (258.75, from 225)");
 
@@ -4006,6 +4228,30 @@ int main(int argc, char** argv) {
             else if (cs.degFromUp != 180.0f)
                 check(dot(dir, right) * std::sin(a) > 0.9f, "a cursor at or below the horizon gives a low leap toward that side");
         }
+        // How high is a plain jump? Three times what 260 gave: v^2 / 2g, so the speed is 260 x sqrt(3).
+        {
+            check(std::fabs(tune::JUMP_SPEED - 260.0f * std::sqrt(3.0f)) < 0.2f, "the jump speed is 260 times the square root of three: three times the height");
+            p = dv2(rock.pos.x + n0.x * (rock.radius + 40.0), rock.pos.y + n0.y * (rock.radius + 40.0));
+            for (int i = 0; i < 400 && game.world.solidAt(p) < 0; ++i) p += n0 * -1.0f;
+            p += n0 * 9.0f;
+            game.pl.pos = p;  game.pl.vel = rock.vel;  game.pl.up = n0;  game.pl.grounded = false;  game.pl.jumpCd = 0.0f;
+            Input idle;
+            for (int f = 0; f < 45; ++f) { game.cam.pos = game.pl.pos;  game.cam.angle = 0.0f;  game.update(renderer, idle, dt); }
+            const dv2 from = game.pl.pos;
+            const v2 up = game.pl.up;
+            float apex = 0.0f;
+            for (int f = 0; f < 200; ++f) {
+                Input in;
+                if (f == 0) in.pressed[VK_SPACE] = true;
+                game.cam.pos = game.pl.pos;  game.cam.angle = 0.0f;
+                aimAt(in, game.pl.pos + dv2(up.x * 300.0, up.y * 300.0));
+                game.update(renderer, in, dt);
+                apex = std::max(apex, dot(tov2(game.pl.pos - from), up));
+            }
+            printf("      a jump straight up, no rocket, rises %.0f units before it turns round\n", apex);
+            check(apex > 100.0f, "a jump lifts the spaceman well clear of the rock (over 100 units)");
+        }
+
         // How much can the rocket do from the ground? (reported, not judged)
         for (int withJump = 0; withJump < 2; ++withJump) {
             p = dv2(rock.pos.x + n0.x * (rock.radius + 40.0), rock.pos.y + n0.y * (rock.radius + 40.0));

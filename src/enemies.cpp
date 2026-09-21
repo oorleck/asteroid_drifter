@@ -268,7 +268,7 @@ void Game::fireEnemyBullet(const Enemy& e, dv2 muzzle) {
     EnemyBullet b;
     b.pos = muzzle;
     b.life = 2.6f;
-    b.damage = D.bulletDamage;
+    b.damage = D.bulletDamage * e.power;
 
     float ang;
     if (e.kind != Enemy::Drone) {
@@ -276,11 +276,11 @@ void Game::fireEnemyBullet(const Enemy& e, dv2 muzzle) {
     } else {
         // Aim where the player will be, given how long the bullet takes to arrive.
         const v2 rel = tov2(pl.pos - muzzle);
-        const float t = len(rel) / D.bulletSpeed;
+        const float t = len(rel) / (D.bulletSpeed * e.speedMul);
         const v2 aimPt = rel + (pl.vel - e.vel) * t;
         ang = std::atan2(aimPt.y, aimPt.x) + rng.sym(D.aimError);
     }
-    b.vel = fromAngle(ang) * D.bulletSpeed + e.vel;
+    b.vel = fromAngle(ang) * (D.bulletSpeed * e.speedMul) + e.vel;
     ebullets.push_back(b);
     ++enemyShots;
     spawnSparks(muzzle, e.vel + fromAngle(ang) * 60.0f, 2, 80.0f, pal::ENEMY, 0.12f);
@@ -318,7 +318,7 @@ void Game::enemyShoot(Enemy& e, dv2 muzzle, float dist, float dt, bool aimed) {
             }
         } else if (e.gunCd <= 0.0f && dist < D.gunRange && aimed) {
             if (clearLine(muzzle, pl.pos)) {
-                e.burst = D.level < 4 ? 2 : (D.level < 9 ? 3 : 4);
+                e.burst = std::max(1, (D.level < 4 ? 2 : (D.level < 9 ? 3 : 4)) + e.shotsBonus);
                 e.gunCd = D.fireInterval * e.cdScale * rng.range(0.8f, 1.3f);
                 e.burstCd = 0.0f;
             } else {
@@ -366,7 +366,7 @@ void Game::updateTurret(Enemy& e, float dt, float dist) {
 
     const float turn = D.turretTurn * dt;
     e.aim = wrapAngle(e.aim + clampf(wrapAngle(want - e.aim), -turn, turn));
-    const bool aimed = std::fabs(wrapAngle(want - e.aim)) < 0.10f + D.aimError;
+    const bool aimed = std::fabs(wrapAngle(want - e.aim)) < 0.05f + D.aimError;
 
     const v2 ad = fromAngle(e.aim);
     const dv2 muzzle(e.pos.x + ad.x * 24.0 + e.normal.x * 6.0,

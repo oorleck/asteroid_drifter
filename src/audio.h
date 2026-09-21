@@ -30,7 +30,7 @@ enum class Sfx : int {
     // force field and shield
     FieldOn, FieldOff, FieldEmpty, ShieldUp, ShieldBlock, ShieldBreak,
     // warships
-    ShipAlert, ShipHit, ShipDeath, CannonCharge, CannonFire, FlakFire,
+    ShipAlert, ShipHit, ShipDeath, CannonCharge, CannonFire, FlakFire, LaserCharge, LaserFire,
     Count
 };
 

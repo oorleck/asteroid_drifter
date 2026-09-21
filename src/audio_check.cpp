@@ -243,7 +243,7 @@ int check(const char* prefix) {
                a.centroid, a.lead * 1000.0f, a.tail, isLoop[i] ? "  (loop)" : "");
         bool ok = a.nan == 0 && std::fabs(a.peak - s.info.peak) < 0.01f * s.info.peak + 1e-4f &&
                   a.seconds > 0.04f && a.seconds < 10.0f && std::fabs(a.dc) < 0.03f && a.rms > 0.004f && a.rms < 0.6f;
-        if (!isLoop[i]) ok = ok && (a.tail < 0.03f * a.peak + 1e-4f || std::strcmp(s.info.name, "cannon-charge") == 0) && a.lead < 0.06f;   // the wind-up is cut off by the shot
+        if (!isLoop[i]) ok = ok && (a.tail < 0.03f * a.peak + 1e-4f || std::strcmp(s.info.name, "cannon-charge") == 0 || std::strcmp(s.info.name, "laser-charge") == 0) && a.lead < 0.06f;   // the wind-up is cut off by the shot
         else            ok = ok && a.jump < 6.0f * a.rmsDiff + 0.004f;                  // the end runs into the start
         if (!ok) { ++bad; printf("      ^ FAILS: nan %d, dc %.4f, seam jump %.4f (rms step %.4f)\n", a.nan, a.dc, a.jump, a.rmsDiff); }
     }

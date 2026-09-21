@@ -660,6 +660,7 @@ void Game::render(Renderer& r) {
     // The level layer: beacon, hostiles, and everything they throw.
     drawGoal(r);
     drawShips(r);
+    drawLaserBeams(r);
     drawEnemies(r);
     drawProjectiles(r);
     drawPMissiles(r);

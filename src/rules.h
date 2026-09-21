@@ -54,7 +54,7 @@ namespace rules {
     static const float TURRET_RADIUS  = 17.0f;
     static const float DRONE_HP       = 32.0f;
     static const float DRONE_RADIUS   = 14.0f;
-    static const float ENEMY_BULLET_GRAV = 2.0f;
+    static const float ENEMY_BULLET_GRAV = 0.8f;  // 2.0 when gravity was a third of what it is now: their rounds bend as much as they did then
     static const float MISSILE_RADIUS = 60.0f;    // blast radius of a homing missile
     static const float MISSILE_CRATER = 17.0f;
 
@@ -87,7 +87,7 @@ namespace rules {
     static const float SHIP_WEAPONS_SHARE = 0.6f; // destroying every gun takes this share of the hull with it
     static const float SHIP_DRIFT       = 90.0f;  // how far it wanders around its berth
     static const float SHIP_TURN        = 0.16f;  // rad/s it can swing to face you
-    static const float SHIP_FIRE_SLOW   = 1.35f;  // its guns fire this much less often than a turret's
+    static const float SHIP_FIRE_SLOW   = 0.45f;  // its guns fire this much less often than a turret's: three times as often as at 1.35
     static const float SHIP_PUSH_SPEED  = 0.35f;  // bounce when you hit the hull
     static const int   FLAK_PELLETS     = 5;      // one flak burst is a fan of this many
     static const float FLAK_SPREAD      = 0.13f;  // radians between pellets
@@ -98,6 +98,18 @@ namespace rules {
     static const float CANNON_DAMAGE    = 2.4f;
     static const float CANNON_CHARGE    = 0.75f;  // the warning glow before it fires
     static const float CANNON_INTERVAL  = 3.6f;
+
+    // The thick ray some warships carry: it cuts through everything in its line (rock, shots, missiles,
+    // your force field and shield), takes 2 s from starting to shoot until the ray fires, and 7 s to recharge.
+    static const float LASER_SHIP_CHANCE = 0.45f;  // this share of warships carry one
+    static const float LASER_CHARGE     = 2.0f;   // from starting to shoot until the ray comes
+    static const float LASER_LOCK       = 0.45f;  // the last part of that it stops following you: the moment to move
+    static const float LASER_FIRE_TIME  = 0.8f;   // how long the ray stays on
+    static const float LASER_RECHARGE   = 7.0f;   // from the ray going out until it starts again
+    static const float LASER_WIDTH      = 38.0f;  // the ray is this thick
+    static const float LASER_RANGE      = 3400.0f;
+    static const float LASER_TRIGGER    = 2300.0f;  // it starts to shoot when you are this close
+    static const float LASER_DPS        = 100.0f; // suit damage a second to anything standing in it
 
     // ---- the multi-target missile salvo ---------------------------------------
     static const int   SALVO_COUNT    = 5;        // small missiles per shot

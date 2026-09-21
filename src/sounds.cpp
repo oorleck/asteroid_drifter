@@ -619,6 +619,33 @@ Buf makeFlakFire() {
     return b;
 }
 
+// Two seconds of a big machine gathering itself: a low hum that climbs into a whine, a
+// tremolo that quickens, ending on the edge of the shot.
+Buf makeLaserCharge() {
+    float ph = 0.0f, ph2 = 0.0f;  Noise n(85);  LP lp;
+    return gen(2.0f, [&](float t) {
+        const float u = t / 2.0f;
+        ph  += TAU * (70.0f * std::pow(28.0f, u)) / SR;                             // 70 Hz up to nearly 2 kHz
+        ph2 += TAU * (35.0f + 40.0f * u) / SR;
+        const float trem = 0.65f + 0.35f * std::sin(TAU * (6.0f + 40.0f * u * u) * t);
+        const float hum  = std::sin(ph2) * 0.5f + lp.run(n.w(), 300.0f + 1500.0f * u) * 0.5f * u;
+        return (std::sin(ph) * 0.55f + std::sin(ph * 2.0f) * 0.18f + hum * 0.7f) * trem * (0.30f + 0.70f * u * u) * atk(t, 0.008f);
+    });
+}
+
+// The ray: a crack as it opens, then nearly a second of thick, buzzing roar that thins away.
+Buf makeLaserFire() {
+    float p1 = 0.0f, p2 = 0.0f, p3 = 0.0f;  Noise n(86), c(87);  LP lp, lp2;
+    return gen(1.1f, [&](float t) {
+        p1 += TAU * 55.0f / SR;  p2 += TAU * 110.7f / SR;  p3 += TAU * 221.0f / SR;
+        const float body = t < 0.85f ? 1.0f : std::exp(-(t - 0.85f) * 14.0f);
+        const float buzz = std::tanh(2.6f * (saw(p1) * 0.55f + saw(p2) * 0.35f + saw(p3) * 0.18f)) * 0.55f;
+        const float roar = lp.run(n.w(), 1400.0f + 500.0f * std::sin(TAU * 9.0f * t)) * 0.65f;
+        const float crack = lp2.run(c.w(), 6000.0f) * std::exp(-t * 55.0f) * 1.4f;
+        return (buzz + roar) * body * (0.85f + 0.15f * std::sin(TAU * 31.0f * t)) * atk(t, 0.004f) + crack;
+    });
+}
+
 // -------------------------------------------------------------------- loops --
 Buf makeThruster() {
     // Two seconds that meet themselves: 2.3 s of source with 0.3 s crossfaded over the join.
@@ -729,6 +756,8 @@ const Entry SFX[] = {
     { "cannon-charge",  0.40f, 3, 0.000f, 0.15f, makeCannonCharge },
     { "cannon-fire",    0.80f, 3, 0.050f, 0.40f, makeCannonFire },
     { "flak-fire",      0.50f, 4, 0.050f, 0.20f, makeFlakFire },
+    { "laser-charge",   0.50f, 2, 0.000f, 0.20f, makeLaserCharge },
+    { "laser-fire",     0.95f, 2, 0.000f, 0.45f, makeLaserFire },
 };
 static_assert(sizeof(SFX) / sizeof(SFX[0]) == (size_t)Sfx::Count, "the sound table must match the Sfx list");
 

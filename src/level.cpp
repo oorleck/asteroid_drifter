@@ -25,7 +25,7 @@ Difficulty makeDifficulty(int level, Rng& rng) {
     d.drones  = std::min(1 + (int)(1.3f * k), 22);
     d.missileFrac = clampf(0.08f + 0.10f * k, 0.0f, 0.75f);
 
-    d.aimError     = std::max(0.03f, 0.17f - 0.011f * L);
+    d.aimError     = std::max(0.015f, 0.085f - 0.0055f * L);   // half what it was: the scatter of every enemy shot
     d.fireInterval = std::max(0.60f, 2.00f - 0.09f * L);
     d.bulletSpeed  = std::min(950.0f, 560.0f + 22.0f * L);
     d.bulletDamage = std::min(16.0f, 4.5f + 0.55f * L);

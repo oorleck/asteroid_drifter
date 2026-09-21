@@ -150,16 +150,27 @@ void generateShip(Ship& s, uint64_t seed, int level, const Difficulty& D) {
 
     // ---- the weapons: mirrored pairs on the edge of the hull, and a bow gun if odd
     const int count = clampi(3 + level / 3 + r.i(0, 2), 3, 9);
+    // Each ship has its own doctrine: how much it favours each kind of weapon, so one is
+    // all guns and another mostly missile pods and cannon.
+    const float doctrine[4] = { r.range(0.3f, 1.9f), r.range(0.3f, 1.9f), r.range(0.3f, 1.9f), r.range(0.3f, 1.9f) };
     auto pickType = [&]() {
-        const float wGun = 4.0f, wFlak = 2.5f;
-        const float wMissile = std::min(4.0f, 1.2f + 0.25f * level);
-        const float wCannon = level >= 3 ? 1.6f : 0.7f;
+        const float wGun = 4.0f * doctrine[0], wFlak = 2.5f * doctrine[1];
+        const float wMissile = std::min(4.0f, 1.2f + 0.25f * level) * doctrine[2];
+        const float wCannon = (level >= 3 ? 1.6f : 0.7f) * doctrine[3];
         float x = r.f() * (wGun + wFlak + wMissile + wCannon);
         if ((x -= wGun) < 0.0f) return ShipWeapon::Gun;
         if ((x -= wFlak) < 0.0f) return ShipWeapon::Flak;
         if ((x -= wMissile) < 0.0f) return ShipWeapon::Missile;
         return ShipWeapon::Cannon;
     };
+    // And every weapon has its own character: quick and light, or slow and heavy, or fast rounds.
+    auto character = [&](ShipWeapon& w) {
+        w.rate  = r.range(0.65f, 1.5f);                  // cooldown: lower is quicker
+        w.power = r.range(0.75f, 1.35f) / std::sqrt(w.rate);   // the quick ones hit lighter, the slow ones harder
+        w.speed = r.range(0.85f, 1.2f);
+        w.shots = w.type == ShipWeapon::Gun ? r.i(-1, 2) : 0;
+    };
+    const bool laser = level >= rules::SHIP_FIRST_LEVEL && r.f() < rules::LASER_SHIP_CHANCE;
     std::vector<float> taken;
     for (int i = 0; i < count / 2; ++i) {
         float x = 0.0f;
@@ -171,17 +182,24 @@ void generateShip(Ship& s, uint64_t seed, int level, const Difficulty& D) {
         }
         taken.push_back(x);
         const float y = halfWidthAt(upper, x) * 0.90f;                 // right on the edge: bullets reach it
-        const ShipWeapon::Type type = pickType();
+        ShipWeapon proto;
+        proto.type = pickType();
+        character(proto);                                              // a mirrored pair shares its character
         for (int side = -1; side <= 1; side += 2) {
-            ShipWeapon w;
-            w.type = type;
+            ShipWeapon w = proto;
             w.local = v2(x, y * side);
             s.weapons.push_back(w);
         }
     }
     if (count & 1) {
         ShipWeapon w;
-        w.type = pickType();
+        w.type = laser ? ShipWeapon::Laser : pickType();               // the odd one out on the bow is the ray, if there is one
+        character(w);
+        w.local = v2(noseX * 0.86f, 0.0f);
+        s.weapons.push_back(w);
+    } else if (laser) {
+        ShipWeapon w;
+        w.type = ShipWeapon::Laser;
         w.local = v2(noseX * 0.86f, 0.0f);
         s.weapons.push_back(w);
     }
@@ -267,7 +285,13 @@ void Game::spawnShip() {
         e.aim = s.angle;
         e.shipId = s.id;
         e.weapon = (int)w.type;
-        e.cdScale = rules::SHIP_FIRE_SLOW;
+        e.cdScale = rules::SHIP_FIRE_SLOW * w.rate;
+        e.power = w.power;  e.speedMul = w.speed;  e.shotsBonus = w.shots;
+        if (w.type == ShipWeapon::Laser) {                 // the ray: a bigger, tougher mount, that waits a while before its first shot
+            e.radius = rules::SHIP_WEAPON_RADIUS * 1.35f;
+            e.maxHp = e.hp = e.maxHp * 1.5f;
+            e.gunCd = rng.range(2.5f, 5.0f);
+        }
         e.tint = s.col;
         w.enemyId = e.id;
         enemies.push_back(e);
@@ -349,21 +373,109 @@ void Game::fireShipBullet(const Enemy& e, dv2 muzzle, float ang, float speedMul,
     EnemyBullet b;
     b.pos = muzzle;
     b.life = life;
-    b.damage = D.bulletDamage * dmgMul;
+    b.damage = D.bulletDamage * dmgMul * e.power;
     b.size = size;
-    b.vel = fromAngle(ang) * (D.bulletSpeed * speedMul) + e.vel;
+    b.vel = fromAngle(ang) * (D.bulletSpeed * speedMul * e.speedMul) + e.vel;
     ebullets.push_back(b);
     ++enemyShots;
     spawnSparks(muzzle, e.vel + fromAngle(ang) * 60.0f, 2, 80.0f, e.tint, 0.14f);
 }
 
+// ---------------------------------------------------------------- the ray --
+// A thick beam that cuts through everything in its line. It starts to shoot when you
+// come within range: two seconds of charging (a thin line shows where it points, and it
+// keeps following you until the last moment), then the ray, then seven seconds before
+// it can start again. e.burst is the state: 0 recharging, 1 charging, 2 firing.
+namespace {
+// How far p is from the segment a..b, and how far along it p falls.
+float distToRay(dv2 a, v2 dir, float length, dv2 p) {
+    const v2 rel((float)(p.x - a.x), (float)(p.y - a.y));
+    const float along = clampf(dot(rel, dir), 0.0f, length);
+    return len(rel - dir * along);
+}
+}
+
+void Game::updateLaser(Ship& s, Enemy& e, float dt) {
+    const Difficulty& D = level.diff;
+    const float dist = dist2d(pl.pos, e.pos);
+    auto follow = [&](float rate) {
+        const v2 rel = tov2(pl.pos - e.pos);
+        const float want = std::atan2(rel.y, rel.x);
+        const float turn = D.turretTurn * rate * dt;
+        e.aim = wrapAngle(e.aim + clampf(wrapAngle(want - e.aim), -turn, turn));
+    };
+
+    if (e.burst == 0) {                                   // recharging, or waiting for something to shoot at
+        e.gunCd -= dt;
+        if (s.aggro) follow(0.5f);
+        if (s.aggro && e.gunCd <= 0.0f && dist < rules::LASER_TRIGGER && state == State::Playing) {
+            e.burst = 1;
+            e.burstCd = rules::LASER_CHARGE;
+            sfx(Sfx::LaserCharge, e.pos, 1.0f, 1.0f, 3200.0f);
+        }
+        return;
+    }
+    if (e.burst == 1) {                                   // charging
+        e.burstCd -= dt;
+        if (e.burstCd > rules::LASER_LOCK) follow(0.6f);  // and then it holds still: that is the moment to move
+        if (e.burstCd <= 0.0f) {
+            e.burst = 2;
+            e.burstCd = rules::LASER_FIRE_TIME;
+            e.beamHit = 0.0f;
+            sfx(Sfx::LaserFire, e.pos, 1.0f, 1.0f, 4200.0f);
+            shake = std::max(shake, 0.5f);
+        }
+        return;
+    }
+
+    // ---- firing: the ray is on
+    e.burstCd -= dt;
+    const v2 dir = fromAngle(e.aim);
+    const dv2 from(e.pos.x + dir.x * (e.radius + 10.0), e.pos.y + dir.y * (e.radius + 10.0));
+    const float halfW = rules::LASER_WIDTH * 0.5f;
+    const float L = rules::LASER_RANGE;
+    shake = std::max(shake, 0.18f);
+
+    // It cuts through rock: a slot the width of the ray, all the way along.
+    const float step = halfW * 0.6f;
+    for (float d = 0.0f; d < L; d += step) {
+        const dv2 p(from.x + dir.x * d, from.y + dir.y * d);
+        const int hit = world.solidAt(p);
+        if (hit < 0) continue;
+        world.damage(hit, p, halfW * 0.9f, 0.15f, rng.u32());
+        if (rng.f() < 0.25f) spawnSparks(p, dir * 120.0f, 3, 240.0f, e.tint, 0.5f);
+    }
+    // ...and through anything that flies: missiles, shots, salvos and shells are cut down in it.
+    for (Missile& m : missiles)
+        if (!m.dead && distToRay(from, dir, L, m.pos) < halfW + 8.0f) destroyMissile(m);
+    for (EnemyBullet& b : ebullets)
+        if (distToRay(from, dir, L, b.pos) < halfW + 4.0f) b.life = 0.0f;
+    for (Bullet& b : bullets)
+        if (distToRay(from, dir, L, b.pos) < halfW + 4.0f) b.life = 0.0f;
+    for (PMissile& m : pmissiles)
+        if (!m.dead && distToRay(from, dir, L, m.pos) < halfW + 6.0f) m.life = 0.0f;
+
+    // And through you: no shield and no force field stops it, so the only defence is to be elsewhere.
+    e.beamHit -= dt;
+    if (e.beamHit <= 0.0f && state == State::Playing && distToRay(from, dir, L, pl.pos) < halfW + rules::PLAYER_HIT_R) {
+        e.beamHit = 0.2f;
+        hurtPlayer(rules::LASER_DPS * 0.2f, v2(0, 0), -1);
+    }
+
+    if (e.burstCd <= 0.0f) {
+        e.burst = 0;
+        e.gunCd = rules::LASER_RECHARGE;
+    }
+}
+
 void Game::updateShipWeapon(Ship& s, Enemy& e, float dt) {
     const Difficulty& D = level.diff;
+    if (e.weapon == ShipWeapon::Laser) { updateLaser(s, e, dt); return; }
     if (!s.aggro) return;
     const float dist = dist2d(pl.pos, e.pos);
 
     // Lead the shot, the way a turret does.
-    float speed = D.bulletSpeed;
+    float speed = D.bulletSpeed * e.speedMul;
     if (e.weapon == ShipWeapon::Flak)   speed *= rules::FLAK_SPEED;
     if (e.weapon == ShipWeapon::Cannon) speed *= rules::CANNON_SPEED;
     const v2 rel = tov2(pl.pos - e.pos);
@@ -371,7 +483,7 @@ void Game::updateShipWeapon(Ship& s, Enemy& e, float dt) {
     const float want = std::atan2(aimPt.y, aimPt.x);
     const float turn = D.turretTurn * 0.9f * dt;
     e.aim = wrapAngle(e.aim + clampf(wrapAngle(want - e.aim), -turn, turn));
-    const bool aimed = std::fabs(wrapAngle(want - e.aim)) < 0.10f + D.aimError;
+    const bool aimed = std::fabs(wrapAngle(want - e.aim)) < 0.05f + D.aimError;
 
     const v2 ad = fromAngle(e.aim);
     const dv2 muzzle(e.pos.x + ad.x * (e.radius + 8.0f), e.pos.y + ad.y * (e.radius + 8.0f));
@@ -512,6 +624,54 @@ void Game::drawShips(Renderer& r) {
     }
 }
 
+// The ray itself: a thin sight line while it charges (brighter, then locked and doubled by
+// the edges of the ray-to-be for the last moment), and a thick slab of light while it fires.
+void Game::drawLaserBeams(Renderer& r) {
+    for (const Ship& s : ships) {
+        if (!s.alive) continue;
+        for (const ShipWeapon& w : s.weapons) {
+            if (w.type != ShipWeapon::Laser) continue;
+            const Enemy* e = findEnemy(w.enemyId);
+            if (!e || e->burst == 0) continue;
+            const v2 dir = fromAngle(e->aim), n = perp(dir);
+            const dv2 from(e->pos.x + dir.x * (e->radius + 10.0), e->pos.y + dir.y * (e->radius + 10.0));
+            const v2 p0 = camRel(from);
+            const v2 p1 = p0 + dir * rules::LASER_RANGE;
+            const float halfW = rules::LASER_WIDTH * 0.5f;
+            const Col hot = mix(e->tint, Col(1.0f, 0.95f, 0.9f), 0.55f);
+
+            if (e->burst == 1) {
+                const float t = 1.0f - clampf(e->burstCd / rules::LASER_CHARGE, 0.0f, 1.0f);
+                const bool locked = e->burstCd <= rules::LASER_LOCK;
+                const Col c = mix(e->tint, Col(1.0f, 0.3f, 0.25f), 0.5f);
+                r.line(p0, p1, c, locked ? 2.4f : 0.7f + 1.0f * t);
+                if (locked || t > 0.5f) {                              // where the edges of the ray will be
+                    const float k = locked ? 1.0f : (t - 0.5f) * 2.0f;
+                    r.line(p0 + n * halfW, p1 + n * halfW, c, 0.6f + 1.0f * k);
+                    r.line(p0 - n * halfW, p1 - n * halfW, c, 0.6f + 1.0f * k);
+                }
+                // The glow gathering at the muzzle.
+                r.circle(p0, 8.0f + 46.0f * (1.0f - t), 16, hot, 0.8f + 2.6f * t);
+                r.point(p0, 6.0f + 16.0f * t, hot, 1.0f + 3.0f * t);
+            } else {
+                const float f = clampf(e->burstCd / rules::LASER_FIRE_TIME, 0.0f, 1.0f);
+                const float fade = std::min(1.0f, f * 4.0f);             // it thins away over the last quarter
+                const float hw = halfW * (0.55f + 0.45f * fade);
+                const float flick = 0.9f + 0.2f * std::sin(time * 90.0f);
+                for (int k = -4; k <= 4; ++k) {                          // a slab of light, built of parallel lines
+                    const bool core = std::abs(k) <= 1;
+                    const v2 off = n * (hw * (float)k / 4.0f);
+                    r.line(p0 + off, p1 + off, core ? Col(1.6f, 1.55f, 1.5f) : mix(e->tint, hot, 0.4f), (core ? 4.4f : 3.6f) * flick * fade + 0.4f);
+                }
+                r.line(p0 + n * hw, p1 + n * hw, e->tint, 3.0f * fade + 0.5f);
+                r.line(p0 - n * hw, p1 - n * hw, e->tint, 3.0f * fade + 0.5f);
+                r.circle(p0, 26.0f * fade + 8.0f, 16, hot, 3.0f * fade);
+                r.point(p0, 26.0f * fade, Col(1.6f, 1.55f, 1.5f), 4.0f * fade);
+            }
+        }
+    }
+}
+
 // The mounts are drawn with the enemies, since that is what they are.
 void Game::drawWeaponMount(Renderer& r, const Enemy& e) {
     const v2 p = camRel(e.pos);
@@ -542,6 +702,20 @@ void Game::drawWeaponMount(Renderer& r, const Enemy& e) {
             r.line(p + d * (R * 0.4f), p + d * (R + 12.0f), c, I);
         }
         break;
+    case ShipWeapon::Laser: {                        // the ray: a heavy lens that fills with light, and a ring that shows the recharge
+        const float chg = e.burst == 1 ? 1.0f - clampf(e.burstCd / rules::LASER_CHARGE, 0.0f, 1.0f) : (e.burst == 2 ? 1.0f : 0.0f);
+        const Col lc = mix(c, Col(1.0f, 0.9f, 0.8f), chg);
+        const v2 tip = p + ad * (R + 20.0f);
+        for (int k = -1; k <= 1; k += 2) {
+            r.line(p + n * (9.0f * k), tip + n * (4.0f * k), lc, I * 1.2f);
+            r.line(tip + n * (4.0f * k), tip + ad * 12.0f, lc, I);
+        }
+        r.circle(tip, 5.0f + 9.0f * chg, 14, lc, I * (0.8f + 1.6f * chg));
+        if (e.burst == 0) {
+            const float ready = 1.0f - clampf(e.gunCd / rules::LASER_RECHARGE, 0.0f, 1.0f);
+            r.arc(p, e.radius + 9.0f, -PIF * 0.5f, -PIF * 0.5f + TAUF * ready, 24, mix(c, Col(1, 1, 1), ready >= 1.0f ? 0.6f : 0.0f), 1.6f);
+        }
+    } break;
     default: {                                       // Cannon: a fat barrel that glows as it charges
         const float charge = e.burst == 1 ? 1.0f - clampf(e.burstCd / rules::CANNON_CHARGE, 0.0f, 1.0f) : 0.0f;
         const Col bc = mix(c, Col(1.0f, 0.9f, 0.6f), charge);

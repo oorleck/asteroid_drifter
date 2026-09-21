@@ -61,7 +61,7 @@ title bar and window frame).
 
 Everything scales each level: how many there are, how accurately and often they
 shoot, how hard they hit, how fast their missiles fly and turn, and how much
-health they have. Level 1 is gentle; level 4 is not.
+health they have. Level 1 is gentle; level 4 is not. Enemy shots scatter half as much as they first did, must line up more closely before they fire, and bend less in gravity, so they land more often.
 
 **Warships.** On level 2, and then about every other level (mostly the even
 ones, now and then an odd one from level 7), a big generated warship is berthed
@@ -77,7 +77,19 @@ from a random seed, so no two are alike:
   later levels. Each is one of four kinds: **guns** (bursts of bullets),
   **missile pods** (homing missiles), **flak** (a fan of five slow pellets) and
   **cannons** (one big, slow, heavy shell, with a glow on the barrel for 3/4 of a
-  second before it fires).
+  second before it fires). **They fire three times as often as a turret's would**, and
+  no two ships are armed alike: each has its own doctrine (one is nearly all guns,
+  another mostly missile pods and cannon) and every weapon its own character, so some
+  are quick and light, some slow and heavy, with faster or slower rounds and longer
+  or shorter bursts (`-lasertest` measures the spread).
+* **The ray.** About 45% of warships carry one on the bow: **a thick beam that cuts
+  through everything** in its line: rock (a slot right through, near or far), shots,
+  missiles and salvos, and you, whatever force field or blast shield is up. It starts
+  to shoot when you are within 2300 units. **Two seconds later the ray fires**; until
+  then a thin sight line follows you and shows where it points, and for the last 0.45 s
+  it stops following and the edges of the ray-to-be appear. That is the moment to move.
+  The ray stays on for 0.8 s (100 suit damage a second) and then **takes 7 seconds to
+  recharge**, shown as a ring round its mount. Shoot the mount off and it is gone.
 * **The hull is armour.** It is solid: you bounce off it. A rifle round does
   under half its damage to it, but blasts (shell splash, salvo, nuke) go straight
   through. A nuke takes 60% of a full hull, so it takes two, or one and a lot of
@@ -144,7 +156,8 @@ under the big things.
 * **Theirs:** enemy bullets are lower and buzzier than yours, missiles launch
   with a rising whoosh, and a missile closing on you sets off a bi-bip warning
   that speeds up as it nears. Warship cannons whine up for 3/4 of a second before
-  they fire, matching the glow on the barrel.
+  they fire, matching the glow on the barrel. The ray charges for two seconds with a
+  low hum that climbs into a whine, then opens with a crack and a thick, buzzing roar.
 * **The world:** rocks tick when hit and crack when they split, explosions come in
   three sizes, and the spaceman has a jump chirp, a landing thud, a dry click on an
   empty tank, and a harsh zap when hurt. Below 35% suit there is a heartbeat that
@@ -281,7 +294,7 @@ onward). Nothing to install or download.
 | Input | Action |
 | --- | --- |
 | `A` / `D` or arrows | Walk along the surface, or steer in flight (see *Tuning*: both speeds are currently 0) |
-| `W` / `Up` / `Space` | Jump **toward the cursor**, and it kicks the rock back. It never goes into the ground: a cursor below or level with the surface gives a low leap along it |
+| `W` / `Up` / `Space` | Jump **toward the cursor**, three times as high as it once was (450 units a second off the ground), and it kicks the rock back. It never goes into the ground: a cursor below or level with the surface gives a low leap along it |
 | Mouse | Aim |
 | Left mouse | Rapid fire. Bullets tunnel, so hold it to drill through |
 | Right mouse / `Shift` | Rocket: thrust toward the cursor, burns fuel |
@@ -302,7 +315,7 @@ onward). Nothing to install or download.
 | `F11` / `F12` | Fullscreen / save a PNG screenshot |
 | `Esc` | Quit |
 
-The rocket burns fuel from a small tank (40 units, burning 25 a second, so 1.6 s of thrust from full) that refills at 18.7 a second while you are not using it. The force field
+The rocket burns fuel from a small tank (32 units, burning 25 a second, so 1.3 s of thrust from full) that refills at 18.7 a second while you are not using it. The force field
 runs off an energy bar: it switches itself off when that empties and will not
 relight until it has recovered a little.
 
@@ -363,6 +376,7 @@ $line
     -jumptest        the jump leaves toward the cursor, never into the ground; tank and gravity values
     -rangetest       the homing weapons blow up when their time is up; refill rate and shot gravity
     -spintest        rocks are born spinning, normally distributed, and keep turning
+    -lasertest       warship weapons: variety, the ray (2 s charge, 7 s recharge, cuts through everything), enemy accuracy
     -bullettest      how far gravity bends each shot
     -showcase        stage each feature and save screenshots (use -shotfile)
 
