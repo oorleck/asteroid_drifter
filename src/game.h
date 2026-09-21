@@ -350,6 +350,8 @@ struct Game {
     // Test and benchmark switches.
     bool     sandbox = false;      // no levels, enemies or timer: the plain toy
     bool     invincible = false;   // enemies still fight, but nothing kills you
+    bool     allItems = false;     // -allitems: everything in the depot is owned from the start, and kept topped up
+    void     grantAllItems();
     bool     floating = false;     // ignore gravity, so a test can hold the player still
 
     float  zoomTarget = 760.0f;

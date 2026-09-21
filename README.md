@@ -353,6 +353,8 @@ Test harnesses. Each prints `PASS`/`FAIL` (or a summary) and exits:
     -nuketest        blast size, falloff, enemy kills, damage by distance
     -leveltest       a pilot bot flies six levels: is the clock fair?
       -peaceful      ...with the enemies removed, to time pure navigation
+    -allitems        every depot item owned and fully loaded from the start, and topped up each level
+$line
     -persisttest     damage survives chunks unloading and reloading
     -rockettest      the rocket obeys its fuel budget
     -walktest        A and D move the right way on screen

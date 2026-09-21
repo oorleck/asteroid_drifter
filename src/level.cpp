@@ -163,6 +163,7 @@ void Game::startLevel(int number, bool retry) {
     stateTime = 0;
     bestLevel = std::max(bestLevel, number);
     levelCredits = credits;  levelEarned = totalEarned;
+    if (allItems) grantAllItems();
     if (!retry) sfxUI(Sfx::LevelStart, 0.9f);
 
     // Every fifth level the reserve of suits is topped back up.

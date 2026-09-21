@@ -50,6 +50,7 @@ void Game::respawn() {
     bullets.clear();
     parts.clear();
     cam.pos = pl.pos;
+    if (allItems) grantAllItems();
 }
 
 // --------------------------------------------------------------- particles --

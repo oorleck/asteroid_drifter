@@ -169,7 +169,7 @@ int main(int argc, char** argv) {
     bool bulletTest = false;
     bool walkTest = false;
     bool sandboxMode = false, levelTest = false, nukeTest = false, enemyTest = false;
-    bool peaceful = false;
+    bool peaceful = false, allItemsArg = false;
     bool showcase = false, shipGallery = false;
     bool weaponTest = false, shopTest = false, keyLog = false, lifeTest = false, shipTest = false;
     bool soundCheck = false, soundTest = false, soundQuick = false, noSound = false, soundGameTest = false, syncTest = false, netTest = false, udpTest = false, versusTest = false, netGameTest = false, fractalTest = false;
@@ -192,6 +192,7 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "-sandbox"))              sandboxMode = true;
         else if (!strcmp(argv[i], "-leveltest"))            levelTest = true;
         else if (!strcmp(argv[i], "-peaceful"))             peaceful = true;
+        else if (!strcmp(argv[i], "-allitems"))             allItemsArg = true;
         else if (!strcmp(argv[i], "-weapontest"))           weaponTest = true;
         else if (!strcmp(argv[i], "-shoptest"))             shopTest = true;
         else if (!strcmp(argv[i], "-keylog"))               keyLog = true;
@@ -301,6 +302,7 @@ int main(int argc, char** argv) {
     game.sandbox    = sandboxMode || walkTest || bulletTest || rocketTest || persistTest;
     // Benchmarks and the scripted demo run must not die or time out.
     game.invincible = selftest;
+    game.allItems = allItemsArg;                     // -allitems: try every weapon from the start
     if (povCam) game.povCamera = true;
     game.init(renderer, seed);
     if (versusBots > 0) game.startVersus(renderer, versusBots);      // -versus N: a match against N bots
@@ -744,6 +746,26 @@ int main(int argc, char** argv) {
         check(!game.pl.hasHoming && !game.pl.hasField && game.credits == 0 && game.pl.nukeAmmo == 0,
               "starting a new run resets purchases and credits");
         (void)startCredits;
+
+        // ---- -allitems: everything owned from the start, and kept full
+        {
+            game.allItems = true;
+            game.startRun(renderer);
+            const Player& p = game.pl;
+            check(p.hasHoming && p.hasSalvo && p.hasField && p.hasShield && p.hasFractal, "with -allitems every weapon is owned from the first frame");
+            check(p.salvoAmmo == rules::SALVO_MAX && p.nukeAmmo == rules::NUKE_MAX && p.fractalAmmo == rules::FRACTAL_MAX,
+                  "with full magazines");
+            check(p.shield == rules::SHIELD_CAPACITY && p.field == 100.0f, "and a charged shield and force field");
+            check(game.credits == 0, "without touching the credits");
+            game.pl.salvoAmmo = 0;  game.pl.nukeAmmo = 0;  game.pl.fractalAmmo = 0;  game.pl.shield = 3.0f;
+            game.startLevel(2);
+            check(game.pl.salvoAmmo == rules::SALVO_MAX && game.pl.nukeAmmo == rules::NUKE_MAX &&
+                  game.pl.fractalAmmo == rules::FRACTAL_MAX && game.pl.shield == rules::SHIELD_CAPACITY,
+                  "and every new level tops them all back up");
+            game.allItems = false;
+            game.startRun(renderer);
+            check(!game.pl.hasFractal && !game.pl.hasSalvo && game.pl.nukeAmmo == 0, "without the flag a run still starts with nothing");
+        }
 
         printf("shoptest: %s\n", failures == 0 ? "PASS" : "FAIL");
         fflush(stdout);

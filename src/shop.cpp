@@ -268,3 +268,14 @@ void Game::drawShop(Renderer& r) {
                12.0f * s, shopNote, c, 1.9f * clampf(shopNoteTime * 2.0f, 0.0f, 1.0f));
     }
 }
+
+// Everything the depot sells, owned and fully loaded: for trying things out
+// (-allitems). Called whenever a run or a level starts, so ammunition is always full.
+void Game::grantAllItems() {
+    pl.hasHoming = true;
+    pl.hasSalvo = true;   pl.salvoAmmo = rules::SALVO_MAX;
+    pl.nukeAmmo = rules::NUKE_MAX;
+    pl.hasField = true;   pl.field = 100.0f;   pl.fieldLocked = false;
+    pl.hasShield = true;  pl.shield = rules::SHIELD_CAPACITY;
+    pl.hasFractal = true; pl.fractalAmmo = rules::FRACTAL_MAX;
+}
