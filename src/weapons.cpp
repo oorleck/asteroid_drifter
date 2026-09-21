@@ -380,7 +380,7 @@ void Game::fireFractal(float aimDist) {
     b.vel = dir * rules::FRACTAL_SPEED + pl.vel;
     b.caliber = rules::FRACTAL_CAL;
     b.gravScale = 2.4f;                                    // 60% less pull than the 6 it had
-    b.budget = tune::HEAVY_PEN;
+    b.budget = rules::FRACTAL_PEN;
     b.heavy = true;
     b.homing = true;
     b.owner = pl.id;
@@ -447,6 +447,29 @@ void Game::splitFractal(const Bullet& parent) {
 
 // A heavy shell going off where it landed. Ordinary ones use the fixed numbers; a fractal
 // piece scales them by its strength, and its blast radius by the square root of it.
+// Rocket jumps. When one of the F shells goes off close to the one who fired it, the blast
+// throws them away from it: a straight-line falloff from a full kick at the centre to
+// nothing at the edge, and a bruise for the trouble (in single player; versus already
+// hurts everyone in a blast). Fire it at the rock below you, and jump as you do, and it
+// carries you far higher than a jump can.
+void Game::blastKick(dv2 pos, int owner) {
+    Player* p = playerById(owner);
+    if (!p || p->dead) return;
+    if (p == &pl && state != State::Playing) return;
+    const v2 rel = tov2(p->pos - pos);
+    const float d = len(rel);
+    if (d >= rules::ROCKETJUMP_RADIUS) return;
+    const float f = 1.0f - d / rules::ROCKETJUMP_RADIUS;
+    const v2 dir = d > 1e-3f ? rel / d : p->up;
+    p->vel += dir * (rules::ROCKETJUMP_KICK * f);
+    p->grounded = false;
+    p->coyote = 0.0f;
+    if (p == &pl && !versus) hurtPlayer(rules::ROCKETJUMP_SELF * f, v2(0, 0), owner);
+    ring(pos, 30.0f + 50.0f * f, 0.3f, Col(1.0f, 0.75f, 0.35f), 1.2f);
+    spawnSparks(pos, dir * 120.0f, 10 + (int)(24.0f * f), 260.0f, Col(1.0f, 0.7f, 0.3f), 0.5f);
+    if (p == &pl) shake = std::max(shake, 0.35f + 0.5f * f);
+}
+
 // The range limit of the homing weapons: out of time, a shell or fractal piece goes off
 // where it is, just as if it had hit something. (A network client only shows it; the
 // host decides what the blast does.)
@@ -463,6 +486,7 @@ void Game::detonateBullet(const Bullet& b) {
         boom(b.pos, 22.0f, b.col);
         explodeOwner = b.owner;
         explode(b.pos, rules::HEAVY_SPLASH_R, rules::HEAVY_SPLASH, versus ? rules::VS_HEAVY_SPLASH : 0.0f, 0, 0, false);
+        blastKick(b.pos, b.owner);
     }
 }
 
@@ -474,5 +498,6 @@ void Game::shellBurst(const Bullet& b) {
                 rules::FRACTAL_CRATER * s, rules::FRACTAL_KICK * b.power, false);
     } else {
         explode(b.pos, rules::HEAVY_SPLASH_R, rules::HEAVY_DAMAGE, 0, 0, 0, false);
+        blastKick(b.pos, b.owner);
     }
 }

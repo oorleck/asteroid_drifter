@@ -53,7 +53,7 @@ namespace tune {
     static const float FIRE_RATE   = 0.085f;
     static const float HEAVY_V     = 700.0f;
     static const float HEAVY_CAL   = 21.0f;
-    static const float HEAVY_PEN   = 50.0f;
+    static const float HEAVY_PEN   = 8.0f;     // the F shell goes off on the rock's surface (it drilled 50 units in, which put the blast out of reach: no rocket jumps)
     static const float HEAVY_RATE  = 1.4f;
 }
 
@@ -424,6 +424,7 @@ struct Game {
     static float fractalSplitTime(float aimDist, float speed);   // ...and the time that takes at a given launch speed: what it actually splits by
     void fireFractal(float aimDist);
     void splitFractal(const Bullet& parent);
+    void blastKick(dv2 pos, int owner);                 // the F shell's blast shoves whoever fired it: rocket jumps
     void detonateBullet(const Bullet& b);              // a shell or fractal piece that has flown its time goes off where it is (the range limit)
     void shellBurst(const Bullet& b);                   // a heavy shell going off where it landed
     void updatePMissiles(float dt);

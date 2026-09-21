@@ -182,7 +182,8 @@ void Game::updateBullets(float dt) {
                     shake = std::max(shake, 0.6f);
                     // A shell going off in the rock still shreds anything nearby.
                     explodeOwner = b.owner;
-                    explode(b.pos, rules::HEAVY_SPLASH_R, rules::HEAVY_SPLASH, versus ? rules::VS_HEAVY_SPLASH : 0.0f, 0, 0, false);
+                    explode(b.pos, rules::HEAVY_SPLASH_R, rules::HEAVY_SPLASH, versus ? rules::VS_HEAVY_SPLASH : 0.0f, rules::HEAVY_CRATER, rules::HEAVY_KICK, false);
+                    blastKick(b.pos, b.owner);                    // and it shoves whoever fired it: a rocket jump
                 }
                 spent = true;
             }

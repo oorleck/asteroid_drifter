@@ -4296,6 +4296,46 @@ int main(int argc, char** argv) {
             check(apex > 100.0f, "a jump lifts the spaceman well clear of the rock (over 100 units)");
         }
 
+        // Rocket jumps: the F shell, fired at the rock below, throws the spaceman clear.
+        {
+            game.pl.hasHoming = true;
+            struct Run { const char* name; bool jump; bool shell; float aimDown; };
+            const Run runs[] = { { "a plain jump", true, false, 2 }, { "the F shell at the ground, standing", false, true, 1 },
+                                 { "a jump and the F shell at the ground together", true, true, 1 },
+                                 { "the F shell fired up into open sky", false, true, 2 } };
+            float apex[4] = { 0, 0, 0, 0 }, lost[4] = { 0, 0, 0, 0 };
+            for (int k = 0; k < 4; ++k) {
+                p = dv2(rock.pos.x + n0.x * (rock.radius + 40.0), rock.pos.y + n0.y * (rock.radius + 40.0));
+                for (int i = 0; i < 400 && game.world.solidAt(p) < 0; ++i) p += n0 * -1.0f;
+                p += n0 * 9.0f;
+                game.pl.pos = p;  game.pl.vel = rock.vel;  game.pl.up = n0;  game.pl.grounded = false;  game.pl.jumpCd = 0.0f;
+                game.pl.heavyCd = 0.0f;  game.pl.health = 100.0f;  game.pl.sinceHurt = 0.0f;
+                game.bullets.clear();
+                Input idle;
+                for (int f = 0; f < 45; ++f) { game.cam.pos = game.pl.pos;  game.cam.angle = 0.0f;  game.update(renderer, idle, dt); }
+                const dv2 from = game.pl.pos;
+                const v2 up = game.pl.up;
+                const float h0 = game.pl.health;
+                for (int f = 0; f < 200; ++f) {
+                    Input in;
+                    if (f == 0) { in.pressed[VK_SPACE] = runs[k].jump;  in.pressed['F'] = runs[k].shell; }
+                    game.cam.pos = game.pl.pos;  game.cam.angle = 0.0f;
+                    const v2 side(up.y, -up.x);
+                    const v2 target = runs[k].aimDown > 1.5f ? up * 300.0f : (runs[k].aimDown > 0.5f ? up * -300.0f : side * 300.0f);
+                    aimAt(in, game.pl.pos + dv2(target.x, target.y));
+                    game.update(renderer, in, dt);
+                    apex[k] = std::max(apex[k], dot(tov2(game.pl.pos - from), up));
+                    if (f == 20) lost[k] = h0 - game.pl.health;
+                }
+                printf("      %-56s rises %4.0f units, suit lost %.0f\n", runs[k].name, apex[k], lost[k]);
+            }
+            check(apex[1] > 60.0f, "the F shell at the ground throws the spaceman clear of it: a rocket jump");
+            check(apex[2] > apex[0] * 1.4f, "and a jump with it goes much higher than a jump alone");
+            check(lost[3] < 2.0f && apex[3] < apex[0] * 1.15f, "a shell fired up into the sky gives no shove (the recoil aside)");
+            check(lost[1] > 2.0f && lost[1] < 35.0f, "it costs a bruise, not the suit");
+            game.pl.health = 100.0f;
+        }
+
         // How much can the rocket do from the ground? (reported, not judged)
         for (int withJump = 0; withJump < 2; ++withJump) {
             p = dv2(rock.pos.x + n0.x * (rock.radius + 40.0), rock.pos.y + n0.y * (rock.radius + 40.0));

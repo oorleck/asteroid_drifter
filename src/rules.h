@@ -45,8 +45,15 @@ namespace rules {
     static const float HEAVY_DAMAGE   = 55.0f;
     static const float HEAVY_SPLASH_R = 70.0f;
     static const float HEAVY_SPLASH   = 45.0f;
+    static const float HEAVY_CRATER   = 26.0f;    // the bite the F shell takes out of the rock it goes off on...
+    static const float HEAVY_KICK     = 5.0e4f;   // ...and the shove it gives that rock
     static const float HOMING_TURN    = 1.75f;    // rad/s a homing shell can turn: a turning radius of about 400 units (speed / rate), so it must be aimed
     static const float HOMING_RANGE   = 1300.0f;  // how far away it can pick a target
+    // Rocket jumps: the F shell's blast shoves the one who fired it, the way a rocket does in Quake. Fire it at
+    // the rock beside or below you (with a jump for even more) and the blast throws you away from it.
+    static const float ROCKETJUMP_RADIUS = 170.0f; // the shove reaches this far from where the shell goes off (a shell in rock goes off up to 50 units deep)
+    static const float ROCKETJUMP_KICK   = 1000.0f; // u/s at the centre; it falls off in a straight line to nothing at the radius
+    static const float ROCKETJUMP_SELF   = 30.0f;  // suit damage to yourself at the centre, falling off the same way (single player; versus has its own)
     static const float HOMING_LIFE    = 1.75f;    // the F shell blows up after this long (about 1300 units at its speed), so a fight cannot be taken further than that
 
     // ---- enemies -----------------------------------------------------------
@@ -161,6 +168,7 @@ namespace rules {
     static const float FRACTAL_SPEEDUP    = 1.14f;    // each split, a piece gains this much speed: five splits, about 1.9 times the launch speed
     static const float FRACTAL_TURN       = 1.95f;    // rad/s a piece can turn toward its target: a radius of about 290 units
     static const float FRACTAL_CAL        = 11.7f;    // the parent's hole in a rock
+    static const float FRACTAL_PEN        = 50.0f;    // how far a fractal piece drills into rock before it goes off (the F shell no longer drills)
     static const float FRACTAL_MIN_CAL    = 2.6f;
     static const float FRACTAL_SPLIT_K    = 1.00f;    // the split timer covers this share of the cursor distance at launch speed: 1.0 puts the first split on the cross (with no gravity)...
     static const float FRACTAL_SPLIT_MIN  = 90.0f;    // ...but never more often than this

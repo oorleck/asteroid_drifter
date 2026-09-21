@@ -118,7 +118,7 @@ freezes and the depot opens. Click a row, or press its number:
 
 | Item | Key | Price | What it does |
 | --- | --- | --- | --- |
-| **Homing shell** | `F` / middle mouse | 300 | The charge shot. A heavy shell that curves onto the nearest enemy in front of it, but in a wide arc (a turning radius of about 400 units), so you have to aim it. It **goes off after 1.75 s** (about 1300 units), so a fight cannot be taken from further away than that, and gravity bends it 60% less than the rifle. |
+| **Homing shell** | `F` / middle mouse | 300 | The charge shot. A heavy shell that curves onto the nearest enemy in front of it, but in a wide arc (a turning radius of about 400 units), so you have to aim it. It **goes off after 1.75 s** (about 1300 units), so a fight cannot be taken from further away than that, and gravity bends it 60% less than the rifle. It goes off on the surface of the first rock it meets, taking a 26-unit bite out of it, **and its blast shoves whoever fired it: rocket jumps** (below). |
 | **Missile salvo** | `G` | 450 (6 salvos), then 150 for 6 more | Five small missiles at once, each sent after a *different* target. With fewer than five targets they double up; incoming enemy missiles count as targets. The missiles are small and **blow up after 2.3 s** wherever they are (about 1300 units), and will not lock onto anything further off than 1200. |
 | **Nuke** | `N` | 400 for 3 | A grenade thrown at 340 units a second and pulled down by gravity 2.5 times as hard as a loose rock is (it was 1.7), so it arcs down into the rocks, with a 3.6 s fuse shown on the bomb itself. A huge blast: it vaporises rock, kills everything in its radius and hurts you if you are close. |
 | **Force field** | `X` | 500 | A bubble that shoves bullets, missiles, drones and rocks away. Costs energy while it is on. |
@@ -126,6 +126,7 @@ freezes and the depot opens. Click a row, or press its number:
 | **Fractal shell** | `Z` | 1400 (3 shells), then 500 for 3 more | The most expensive thing in the depot, and the most powerful against groups. A homing shell that **splits in two** every so often, up to **five times**, so one shot can become **32 pieces**, and every piece homes on its own target. Each generation is **0.45** of the one before (half, less a tenth), so its power is spread across a swarm rather than spent in one place. |
 
 Purchases last for the run. Nukes can only be bought, never found. `R` is the restart key, so the nuke stays on `N`.
+**Rocket jumps.** The F shell's blast throws the one who fired it, as a rocket does in Quake. Aim it at the rock below or beside you and fire: the shell goes off on the surface, and the blast (a full kick of 1000 units a second at the centre, falling off in a straight line to nothing 170 units out) sends you the other way, for the price of a bruise of up to 30 suit at point-blank range. Standing on a rock and firing straight down lifts you about 860 units, more than twice a jump (which is about 380); hold Space as you fire and the jump adds its own. A shell fired into open sky gives no shove. The cooldown between shells is 1.4 s, so a chain of them is possible when there is rock to fire at. `-jumptest` measures it.
 
 **The fractal shell** is worth understanding, because how you aim it changes what it does. It leaves blood red and turns towards yellow with every split, and the pieces are small and sharp. *How far the cursor is from the spaceman decides how far the shell flies between splits*: the split is on a timer, set to the time the shell takes to fly as far as the cross is from you. With no gravity that means it splits exactly at the cross (and again at the same spacing after that), and gravity from rock bends it off that mark, since the timer does not care. Never less than 90 units of flight, and never more than 1300. **Every piece blows up 2.8 s after the shot was fired**, split or not, so a cursor far away gives a shell that goes off before it has split much, and nothing reaches further than about 1800 units. Gravity bends it 60% less than it used to. Put the cross on a cluster and the first split happens over the cluster; point at something close and it divides almost at once into a cloud; point far away and it flies a long way as a single heavy shell, then divides late. Later splits come at the same time interval. Whenever it splits, the two pieces leave the parent's line by about 13 degrees, each **14% faster** than the parent was (so the last pieces move nearly twice as fast as the shell did), and are each given a *different* target, the one on the left to the left-hand piece, so a volley spreads over a group rather than piling onto the nearest enemy.
 
@@ -303,7 +304,7 @@ onward). Nothing to install or download.
 | Left mouse | Rapid fire. Bullets tunnel, so hold it to drill through |
 | Right mouse / `Shift` | Rocket: thrust toward the cursor (360 units/s², weakened in steps from 750), burns fuel |
 | `Left Alt` (hold) | Blast shield, once bought. Right Alt / AltGr does nothing |
-| `F` / middle mouse | Homing shell, once bought |
+| `F` / middle mouse | Homing shell, once bought. Fired at the rock beside or below you, it throws you clear: a rocket jump |
 | `G` | Missile salvo, once bought |
 | `N` | Throw a nuke, once bought |
 | `X` | Force field on/off, once bought |
@@ -377,7 +378,7 @@ $line
     -persisttest     damage survives chunks unloading and reloading
     -rockettest      the rocket obeys its fuel budget
     -walktest        A and D move the right way on screen
-    -jumptest        the jump leaves toward the cursor, never into the ground; tank and gravity values
+    -jumptest        the jump leaves toward the cursor, never into the ground; tank and gravity values; rocket jumps
     -rangetest       the homing weapons blow up when their time is up; refill rate and shot gravity
     -spintest        rocks are born spinning, normally distributed, and keep turning
     -lasertest       warship weapons: variety, the ray (2 s charge, 7 s recharge, cuts through everything), enemy accuracy
