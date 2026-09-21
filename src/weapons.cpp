@@ -259,6 +259,21 @@ void Game::drawPMissiles(Renderer& r) {
     }
 }
 
+// The F shell goes for the enemy closest to the cursor (measured to the edge of it), out of
+// those it could reach. It is worked out every frame, so the mark on it is always there
+// before you fire, and it only exists once the shell has been bought.
+void Game::updateHomingLock(dv2 cursor) {
+    homingLock = 0;
+    if (!pl.hasHoming || playerGone() || state != State::Playing) return;
+    float best = 1e30f;
+    for (const Enemy& e : enemies) {
+        if (!e.alive) continue;
+        if ((float)len(e.pos - pl.pos) - e.radius > rules::HOMING_RANGE) continue;      // out of reach of the shell
+        const float d = (float)len(e.pos - cursor) - e.radius;
+        if (d < best) { best = d; homingLock = e.id; }
+    }
+}
+
 // Brackets around whatever a homing weapon has locked onto.
 void Game::drawLocks(Renderer& r) {
     auto bracket = [&](dv2 at, float radius, Col c, float spin) {
@@ -269,6 +284,15 @@ void Game::drawLocks(Renderer& r) {
             r.arc(p, radius, a - 0.25f, a + 0.25f, 4, c, 2.6f);
         }
     };
+    // The one the F shell will go for, marked before you fire: a bigger bracket, and a thin line to it
+    // from the spaceman. Dimmer while the shell is reloading.
+    if (const Enemy* e = findEnemy(homingLock)) {
+        const float k = pl.heavyCd > 0.0f ? 0.45f : 1.0f;
+        const Col c = mix(Col(0.1f, 0.1f, 0.15f), pal::HOMING, k);
+        bracket(e->pos, e->radius + 20.0f, c, time * 2.2f);
+        bracket(e->pos, e->radius + 30.0f, c, -time * 1.4f);
+        r.line(camRel(pl.pos), camRel(e->pos), c, 0.6f);
+    }
     for (const Bullet& b : bullets) {
         if (!b.homing || b.targetId == 0) continue;
         if (const Enemy* e = findEnemy(b.targetId)) bracket(e->pos, e->radius + 12.0f, pal::HOMING, time * 3.0f);

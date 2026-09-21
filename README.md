@@ -118,7 +118,7 @@ freezes and the depot opens. Click a row, or press its number:
 
 | Item | Key | Price | What it does |
 | --- | --- | --- | --- |
-| **Homing shell** | `F` / middle mouse | 300 | The charge shot. A heavy shell that curves onto the nearest enemy in front of it, but in a wide arc (a turning radius of about 400 units), so you have to aim it. It **goes off after 1.75 s** (about 1300 units), so a fight cannot be taken from further away than that, and gravity bends it 60% less than the rifle. It goes off on the surface of the first rock it meets, taking a 26-unit bite out of it, **and its blast shoves whoever fired it: rocket jumps** (below). |
+| **Homing shell** | `F` / middle mouse | 300 | The charge shot. A heavy shell that curves onto **the enemy closest to your cursor**, which is marked with a bracket and a thin line from you at all times once the shell is bought (dimmer while it reloads), so you know what it will chase before you fire; it is only ever one within reach (about 1300 units). It turns in a wide arc (a turning radius of about 400 units), so you have to aim it. It **goes off after 1.75 s** (about 1300 units), so a fight cannot be taken from further away than that, and gravity bends it 60% less than the rifle. It goes off on the surface of the first rock it meets, taking a 26-unit bite out of it, **and its blast shoves whoever fired it: rocket jumps** (below). |
 | **Missile salvo** | `G` | 450 (6 salvos), then 150 for 6 more | Five small missiles at once, each sent after a *different* target. With fewer than five targets they double up; incoming enemy missiles count as targets. The missiles are small and **blow up after 2.3 s** wherever they are (about 1300 units), and will not lock onto anything further off than 1200. |
 | **Nuke** | `N` | 400 for 3 | A grenade thrown at 340 units a second and pulled down by gravity 2.5 times as hard as a loose rock is (it was 1.7), so it arcs down into the rocks, with a 3.6 s fuse shown on the bomb itself. A huge blast: it vaporises rock, kills everything in its radius and hurts you if you are close. |
 | **Force field** | `X` | 500 | A bubble that shoves bullets, missiles, drones and rocks away. Costs energy while it is on. |
@@ -304,7 +304,7 @@ onward). Nothing to install or download.
 | Left mouse | Rapid fire. Bullets tunnel, so hold it to drill through |
 | Right mouse / `Shift` | Rocket: thrust toward the cursor (360 units/s², weakened in steps from 750), burns fuel |
 | `Left Alt` (hold) | Blast shield, once bought. Right Alt / AltGr does nothing |
-| `F` / middle mouse | Homing shell, once bought. Fired at the rock beside or below you, it throws you clear: a rocket jump |
+| `F` / middle mouse | Homing shell, once bought; it goes for the enemy marked nearest the cursor. Fired at the rock beside or below you, it throws you clear: a rocket jump |
 | `G` | Missile salvo, once bought |
 | `N` | Throw a nuke, once bought |
 | `X` | Force field on/off, once bought |
@@ -379,7 +379,7 @@ $line
     -rockettest      the rocket obeys its fuel budget
     -walktest        A and D move the right way on screen
     -jumptest        the jump leaves toward the cursor, never into the ground; tank and gravity values; rocket jumps
-    -rangetest       the homing weapons blow up when their time is up; refill rate and shot gravity
+    -rangetest       the homing weapons blow up when their time is up; refill rate and shot gravity; the F lock
     -spintest        rocks are born spinning, normally distributed, and keep turning
     -lasertest       warship weapons: variety, the ray (2 s charge, 7 s recharge, cuts through everything), enemy accuracy
     -bullettest      how far gravity bends each shot
@@ -574,6 +574,7 @@ A few notes on what interacts with what:
 * **Rocket refuelling.** Fuel regenerates even while the button is held, so
   holding it on an empty tank sputters at a duty cycle of regen / (regen + burn).
   `-rockettest` checks that thrust never exceeds that budget.
+* **Gravity has a shorter reach**: each rock's pull is worked out from its surface, where it is what it always was, and higher up it drops as if you were a third further away (`GRAVITY_REACH` 0.75, so the reach is 25% shorter: 0.66 of the old pull 300 units up a 100-unit rock, 0.60 at 900).
 * Gravity is `G * m * r / (r^2 + soft)^1.5` with softening proportional to the
   rock's radius. Since a rock's mass scales with its area, **surface gravity
   works out roughly the same on every rock** (about 650 u/s^2: `GRAV_CONST` is 258.75; it began at 100), and **the spaceman feels 30% more than that** (`PLAYER_GRAV` 1.3), so a jump falls back faster and the rocket has to work harder to lift him. The rocket is now weaker than the pull at a rock's surface, so held straight up from standing it will not lift him off at all: it takes a jump first, and the rocket then carries him on (`-jumptest` reports both).

@@ -424,6 +424,8 @@ struct Game {
     static float fractalSplitTime(float aimDist, float speed);   // ...and the time that takes at a given launch speed: what it actually splits by
     void fireFractal(float aimDist);
     void splitFractal(const Bullet& parent);
+    int  homingLock = 0;                                // the enemy the F shell will go for: the one nearest the cursor (0 = none, or no shell bought)
+    void updateHomingLock(dv2 cursor);
     void blastKick(dv2 pos, int owner);                 // the F shell's blast shoves whoever fired it: rocket jumps
     void detonateBullet(const Bullet& b);              // a shell or fractal piece that has flown its time goes off where it is (the range limit)
     void shellBurst(const Bullet& b);                   // a heavy shell going off where it landed

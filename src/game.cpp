@@ -207,6 +207,7 @@ void Game::fire(Player& p, bool heavy) {
     b.life    = heavy ? rules::HOMING_LIFE : 2.6f;
     b.heavy   = heavy;
     b.homing  = heavy;              // the charge shot is the homing shell
+    if (heavy && &p == &pl) b.targetId = homingLock;   // and it goes for the enemy nearest your cursor, which was marked before you fired
     b.owner   = p.id;
     b.col     = heavy ? C_HEAVY : C_BULLET;
     if (versus) b.col = mix(b.col, p.tint, 0.55f);     // so you can tell whose shot it is
@@ -235,6 +236,7 @@ void Game::updatePlayer(Renderer& r, const Input& in, float dt) {
     const v2 off = rot(v2(nx, ny), std::cos(-cam.angle), std::sin(-cam.angle));
     const v2 toCursor((float)(cam.pos.x + off.x - pl.pos.x), (float)(cam.pos.y + off.y - pl.pos.y));
     lastAimDist = len(toCursor);                 // how far away the cross is: the fractal shell splits by it
+    updateHomingLock(dv2(pl.pos.x + toCursor.x, pl.pos.y + toCursor.y));   // and which enemy the F shell will chase
     v2 aimDir = norm(toCursor);
     if (len2(aimDir) < 0.25f) aimDir = fromAngle(pl.aim);
 

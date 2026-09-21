@@ -20,6 +20,7 @@ namespace cfg {
     static const float  MAX_SEPARATION_SPEED = 55.0f;  // cap on penetration push-out
     static const float  MAX_BODY_SPEED = 600.0f;
     static const float  MAX_BODY_SPIN  = 4.0f;    // above three sigma of the spin they are born with, so the bell curve is not clipped (it was 2)
+    static const float  GRAVITY_REACH  = 0.75f;   // a rock's pull reaches 25% less far from its surface (the pull at the surface is unchanged)
     static const float  SPIN_SIGMA     = 1.20f;   // rad/s: the spread of the spin a rock is born with, normally distributed about none (0.30, 0.60, now 1.20)
     static const float  SPIN_DAMPING   = 0.03f;   // per second: how quickly spin bleeds away (0.09 before, which had it gone in half a minute)
 }

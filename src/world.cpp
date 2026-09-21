@@ -634,18 +634,26 @@ v2 World::gravityAt(dv2 p, double reach, int* dominant) const {
     v2 a(0, 0);
     double best = 0;
     int bestIdx = -1;
-    grid.forEachNear(*this, p, reach, [&](int i) {
+    // A rock's pull is measured from its surface: at the surface it is what it always was, and
+    // away from it the pull drops as if the height were GRAVITY_REACH-times further (so its reach
+    // is 25% shorter). The search radius is shortened the same way.
+    grid.forEachNear(*this, p, reach * (double)cfg::GRAVITY_REACH, [&](int i) {
         const Body& b = bodies[i];
         if (!b.alive) return;
         const double dx = b.pos.x - p.x, dy = b.pos.y - p.y;
-        const double r2 = dx * dx + dy * dy;
+        const double r = std::sqrt(dx * dx + dy * dy);
+        const double h = std::max(0.0, r - (double)b.radius);
+        const double re = r < (double)b.radius ? r : (double)b.radius + h / (double)cfg::GRAVITY_REACH;   // the distance the pull is worked out at (unchanged inside the bounding circle)
         // Softening keeps the pull finite when you are standing on the rock.
         const double soft = 0.30 * (double)b.radius * b.radius;
-        const double denom = std::pow(r2 + soft, 1.5);
+        const double denom = std::pow(re * re + soft, 1.5);
         const double m = (double)cfg::GRAV_CONST * b.mass / denom;
-        a.x += (float)(dx * m);
-        a.y += (float)(dy * m);
-        const double strength = m * std::sqrt(r2 + soft);
+        if (r > 1e-6) {
+            const double k = m * re / r;                                          // magnitude m * re, along (dx, dy) / r
+            a.x += (float)(dx * k);
+            a.y += (float)(dy * k);
+        }
+        const double strength = m * std::sqrt(re * re + soft);
         if (strength > best) { best = strength; bestIdx = i; }
     });
     if (dominant) *dominant = bestIdx;
