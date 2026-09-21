@@ -69,6 +69,7 @@ namespace pal {
     static const Col SALVO   (0.40f, 1.00f, 0.85f);
     static const Col FIELD   (0.35f, 0.85f, 1.00f);
     static const Col SHIELD  (1.00f, 0.80f, 0.30f);
+    static const Col FRACTAL (0.72f, 0.55f, 1.00f);
 }
 
 struct Bullet {
@@ -79,6 +80,10 @@ struct Bullet {
     float caliber = 5.0f;
     float gravScale = 1.0f;        // multiplier on the pull of nearby rock
     int   owner = -1;              // who fired it: a player id, or -1 for none (versus mode scores by this)
+    // The fractal shell: gen is 0 for the parent and counts up with each split (-1 = an ordinary round);
+    // power is its strength against the parent's 1.0; it splits when it has flown splitEvery units.
+    int   gen = -1;
+    float power = 1.0f, travel = 0.0f, splitEvery = 0.0f;
     bool  heavy = false;
     bool  homing = false;          // the homing shell steers onto an enemy
     int   targetId = 0;
@@ -131,6 +136,9 @@ struct Player {
     bool  hasField  = false;       // the force field    [X]
     int   salvoAmmo = 0;
     int   nukeAmmo  = 0;           // the nuke           [N]
+    bool  hasFractal = false;      // the fractal shell [Z]
+    int   fractalAmmo = 0;
+    float fractalCd = 0;
     float field = 100;             // force-field energy
     bool  fieldOn = false;
     bool  fieldLocked = false;     // ran dry: stays off until the energy recovers
@@ -298,7 +306,7 @@ struct Level {
 enum class State { Playing, Dead, LevelComplete, Shop, GameOver };   // Dead: a life was lost, the level restarts shortly
 
 // What the supply depot sells.
-enum ShopItem { ITEM_HOMING, ITEM_SALVO, ITEM_NUKE, ITEM_FIELD, ITEM_SHIELD, ITEM_COUNT };
+enum ShopItem { ITEM_HOMING, ITEM_SALVO, ITEM_NUKE, ITEM_FIELD, ITEM_SHIELD, ITEM_FRACTAL, ITEM_COUNT };
 
 struct Game {
     World    world;
@@ -395,6 +403,12 @@ struct Game {
 
     // ---- weapons (weapons.cpp)
     void fireSalvo(v2 aimDir);
+    // ---- the fractal shell (weapons.cpp)
+    float lastAimDist = 400.0f;                         // how far the cursor is from the spaceman, in world units
+    static float fractalSplitDistance(float aimDist);   // how far a shell flies between splits, given that
+    void fireFractal(float aimDist);
+    void splitFractal(const Bullet& parent);
+    void shellBurst(const Bullet& b);                   // a heavy shell going off where it landed
     void updatePMissiles(float dt);
     void updateField(float dt);
     void steerHoming(Bullet& b, float dt);

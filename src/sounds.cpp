@@ -168,6 +168,37 @@ Buf makeSalvo() {
     });
 }
 
+// A crystalline shell: a deep thump as it leaves, and a glassy shimmer that rises
+// after it, the sound of something about to come apart.
+Buf makeFractalFire() {
+    float ph = 0.0f;  Noise n(15);  LP lp;
+    Buf b = gen(0.75f, [&](float t) {
+        ph += TAU * (60.0f + 130.0f * std::exp(-t * 16.0f)) / SR;
+        const float thump = std::sin(ph) * std::exp(-t * 9.0f) + lp.run(n.w(), 900.0f) * std::exp(-t * 26.0f) * 0.5f;
+        float glass = 0.0f;
+        for (int k = 0; k < 3; ++k) {                                           // three partials, climbing a little
+            const float f = (1900.0f + 900.0f * k) * (1.0f + 0.45f * std::min(1.0f, t / 0.5f));
+            glass += std::sin(TAU * f * t) * (0.5f - 0.1f * k);
+        }
+        const float shimmer = 0.6f + 0.4f * std::sin(TAU * 21.0f * t);
+        return (thump * 1.1f + glass * shimmer * 0.30f * atk(t, 0.04f) * std::exp(-std::max(0.0f, t - 0.25f) * 6.0f)) * atk(t, 0.001f);
+    });
+    Noise s(16);  sparkle(b, s, 8, 0.05f, 0.5f, 3500.0f, 8500.0f, 0.06f, 40.0f);
+    return b;
+}
+
+// A quick glassy chirp: a shell dividing in two.
+Buf makeFractalSplit() {
+    return gen(0.2f, [](float t) {
+        auto blip = [](float u, float f0, float f1) {
+            if (u < 0.0f) return 0.0f;
+            const float f = f0 + (f1 - f0) * std::min(1.0f, u / 0.05f);
+            return std::sin(TAU * f * u) * std::exp(-u * 30.0f) * atk(u, 0.0008f);
+        };
+        return blip(t, 1500.0f, 2500.0f) + 0.8f * blip(t - 0.035f, 1900.0f, 3100.0f) + 0.05f * std::sin(TAU * 5200.0f * t) * std::exp(-t * 60.0f);
+    });
+}
+
 Buf makeNukeThrow() {
     float ph = 0.0f, ph2 = 0.0f;  Noise n(14);  LP lp;
     return gen(0.4f, [&](float t) {
@@ -657,6 +688,8 @@ const Entry SFX[] = {
     { "rifle",          0.42f, 5, 0.000f, 0.10f, makeRifle },
     { "shell",          0.65f, 3, 0.000f, 0.22f, makeShell },
     { "salvo",          0.55f, 2, 0.100f, 0.25f, makeSalvo },
+    { "fractal-fire",   0.55f, 2, 0.150f, 0.40f, makeFractalFire },
+    { "fractal-split",  0.32f, 6, 0.030f, 0.35f, makeFractalSplit },
     { "nuke-throw",     0.50f, 2, 0.000f, 0.15f, makeNukeThrow },
     { "nuke-beep",      0.45f, 3, 0.000f, 0.10f, makeNukeBeep },
     { "nuke-boom",      1.00f, 1, 0.000f, 0.60f, makeNukeBoom },

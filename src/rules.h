@@ -126,6 +126,26 @@ namespace rules {
     static const float SHIELD_RADIUS   = 46.0f;    // how far out from the spaceman it hangs
     static const float SHIELD_CAPACITY = 100.0f;
 
+
+    // ---- the fractal shell ---------------------------------------------------------
+    // A homing shell that splits in two every so often, and every piece homes too. Each
+    // generation is half its parent, less a tenth: 0.5 x 0.9 = 0.45. Five splits at most,
+    // so one shot can become 32 pieces. It is the most expensive thing in the depot.
+    static const float FRACTAL_SPEED      = 560.0f;   // slower than the rifle so you can watch it divide
+    static const float FRACTAL_DAMAGE     = 240.0f;   // what the parent would do on a direct hit; most of it is spent before it lands, splitting
+    static const float FRACTAL_SPLASH_R   = 85.0f;    // and its blast radius
+    static const float FRACTAL_CHILD      = 0.45f;    // a child's strength as a share of its parent's: 50% minus 10%
+    static const int   FRACTAL_SPLITS     = 5;        // generations after the first
+    static const float FRACTAL_SPREAD     = 0.30f;    // radians each child leaves the parent's line by
+    static const float FRACTAL_TURN       = 5.0f;     // rad/s a piece can turn toward its target
+    static const float FRACTAL_CAL        = 18.0f;    // the parent's hole in a rock
+    static const float FRACTAL_MIN_CAL    = 4.0f;
+    static const float FRACTAL_SPLIT_K    = 0.40f;    // it splits every this share of the distance to the cursor...
+    static const float FRACTAL_SPLIT_MIN  = 90.0f;    // ...but never more often than this
+    static const float FRACTAL_SPLIT_MAX  = 1100.0f;  // ...or more rarely
+    static const float FRACTAL_COOLDOWN   = 2.4f;
+    static const int   FRACTAL_LOAD       = 3;        // shells per purchase
+    static const int   FRACTAL_MAX        = 12;
     // ---- the nuke ----------------------------------------------------------
     static const float NUKE_FUSE      = 3.6f;     // seconds from throw to blast
     static const float NUKE_SPEED     = 170.0f;   // slow, so gravity drags it hard
@@ -162,4 +182,6 @@ namespace rules {
     static const int   PRICE_FIELD    = 500;      // unlocks the force field
     static const int   PRICE_SHIELD   = 350;      // fits the shield, fully charged
     static const int   PRICE_SHIELD_REFILL = 120; // tops it back up
+    static const int   PRICE_FRACTAL  = 1400;     // unlocks the fractal shell, with FRACTAL_LOAD of them
+    static const int   PRICE_FRACTAL_AMMO = 500;  // FRACTAL_LOAD more
 }

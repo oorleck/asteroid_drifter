@@ -193,7 +193,7 @@ void Game::retryLevel(Renderer& r) {
     world.syncGeometry(r);
 
     pl.health = 100.0f;  pl.sinceHurt = 99.0f;  pl.hurtGlow = 0.0f;
-    pl.fireCd = pl.heavyCd = pl.salvoCd = pl.nukeCd = pl.jumpCd = pl.coyote = 0.0f;
+    pl.fireCd = pl.heavyCd = pl.salvoCd = pl.nukeCd = pl.fractalCd = pl.jumpCd = pl.coyote = 0.0f;
     pl.thrusting = false;  pl.fieldOn = false;  pl.shieldUp = false;  pl.shieldFlash = 0.0f;
     pl.grounded = false;   pl.ground = BodyRef();
     if (pl.hasShield) pl.shield = rules::SHIELD_CAPACITY;      // a fresh suit, a charged plate

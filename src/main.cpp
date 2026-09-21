@@ -172,7 +172,7 @@ int main(int argc, char** argv) {
     bool peaceful = false;
     bool showcase = false, shipGallery = false;
     bool weaponTest = false, shopTest = false, keyLog = false, lifeTest = false, shipTest = false;
-    bool soundCheck = false, soundTest = false, soundQuick = false, noSound = false, soundGameTest = false, syncTest = false, netTest = false, udpTest = false, versusTest = false, netGameTest = false;
+    bool soundCheck = false, soundTest = false, soundQuick = false, noSound = false, soundGameTest = false, syncTest = false, netTest = false, udpTest = false, versusTest = false, netGameTest = false, fractalTest = false;
     int versusBots = 0, hostPort = 0, hostBots = 0;
     bool loopbackOnly = false;
     std::string playerName;
@@ -205,6 +205,7 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "-nettest"))              netTest = true;
         else if (!strcmp(argv[i], "-udptest"))              udpTest = true;
         else if (!strcmp(argv[i], "-versustest"))           versusTest = true;
+        else if (!strcmp(argv[i], "-fractaltest"))          fractalTest = true;
         else if (!strcmp(argv[i], "-netgametest"))          netGameTest = true;
         else if (!strcmp(argv[i], "-host"))                 { hostPort = 4790; if (i + 1 < argc && argv[i + 1][0] >= '0' && argv[i + 1][0] <= '9') hostPort = atoi(argv[++i]); if (i + 1 < argc && argv[i + 1][0] >= '0' && argv[i + 1][0] <= '7' && strlen(argv[i + 1]) == 1) hostBots = atoi(argv[++i]); }
         else if (!strcmp(argv[i], "-join") && i + 1 < argc)  joinAddr = argv[++i];
@@ -838,6 +839,12 @@ int main(int argc, char** argv) {
             Input in;  in.pressed['G'] = true;
             run(in, 1);
             check(plays(Sfx::Salvo) >= 1, "the missile salvo");
+            game.pl.hasFractal = true;  game.pl.fractalAmmo = 2;  game.pl.fractalCd = 0.0f;
+            Input fz;  fz.pressed['Z'] = true;  fz.mousePx = v2(gWidth * 0.8f, gHeight * 0.5f);
+            run(fz, 1);
+            check(plays(Sfx::FractalFire) >= 1, "the fractal shell has its own launch sound");
+            run(idle, 40);
+            check(plays(Sfx::FractalSplit) >= 1, "and a chirp each time it divides");
             game.pl.nukeAmmo = 1;  game.pl.nukeCd = 0.0f;
             Input n;  n.pressed['N'] = true;
             run(n, 1);
@@ -2563,6 +2570,315 @@ int main(int argc, char** argv) {
         fflush(stdout);
         renderer.shutdown();
         return 0;
+    }
+
+    if (fractalTest) {
+        printf("fractaltest:\n");
+        const float dt = 1.0f / 60.0f;
+        Input idle;
+        int failures = 0;
+        auto check = [&](bool ok, const char* what) {
+            printf("  %-72s %s\n", what, ok ? "ok" : "FAIL");
+            if (!ok) ++failures;
+        };
+
+        // ---- how far it flies between splits depends on how far the cursor is
+        {
+            check(Game::fractalSplitDistance(0.0f) == rules::FRACTAL_SPLIT_MIN, "a cursor on top of you gives the shortest interval");
+            check(Game::fractalSplitDistance(100000.0f) == rules::FRACTAL_SPLIT_MAX, "a cursor a very long way off gives the longest");
+            bool monotonic = true;
+            float prev = 0.0f;
+            for (float a = 0.0f; a <= 4000.0f; a += 25.0f) {
+                const float x = Game::fractalSplitDistance(a);
+                if (x < prev - 1e-3f) monotonic = false;
+                prev = x;
+            }
+            check(monotonic, "the farther the cursor, the longer between splits, never shorter");
+            const float a1 = Game::fractalSplitDistance(500.0f), a2 = Game::fractalSplitDistance(1000.0f);
+            printf("      aiming at 500 units: splits every %.0f; at 1000 units: every %.0f\n", a1, a2);
+            check(std::fabs(a2 / a1 - 2.0f) < 0.01f, "in the middle of the range it is proportional: twice as far, twice as long");
+        }
+
+        // ---- a fresh level, and open space to fire into
+        game.startRun(renderer);
+        game.invincible = true;
+        game.floating = true;
+        game.startLevel(3);
+        game.level.slots.clear();
+        game.level.diff.droneSpeed = 0.0f;
+        const dv2 C(6000.0, 6000.0);
+        openSpot(C);
+        game.pl.hasFractal = true;
+        game.pl.fractalAmmo = 12;
+
+        auto hold = [&]() { game.pl.pos = C;  game.pl.vel = v2(0, 0); };
+        auto fireAt = [&](float aimDist, float angle) {
+            hold();
+            game.pl.aim = angle;
+            game.lastAimDist = aimDist;
+            game.pl.fractalCd = 0.0f;
+            game.fireFractal(aimDist);
+        };
+        auto runFrames = [&](int n) { for (int i = 0; i < n; ++i) { hold(); game.update(renderer, idle, dt); } };
+
+        // ---- the split cascade: how many, how strong, how often
+        {
+            game.bullets.clear();
+            game.enemies.clear();
+            const dv2 muzzle(C.x + 16.0, C.y);
+            fireAt(500.0f, 0.0f);                                   // splits every 200 units
+            check(game.bullets.size() == 1 && game.bullets[0].gen == 0, "firing makes one shell");
+            check(game.bullets[0].homing, "and it is a homing device");
+
+            int maxGen = -1;  size_t peak = 0;
+            bool allHoming = true, powerLaw = true, neverPastFive = true, oneParent = true;
+            double firstSplitDist = -1;
+            std::vector<size_t> whenCount(8, 0);
+            size_t frames = 0;
+            for (; frames < 60 * 3; ++frames) {
+                runFrames(1);
+                peak = std::max(peak, game.bullets.size());
+                if (firstSplitDist < 0 && game.bullets.size() >= 2) {
+                    double d = 0;
+                    for (const Bullet& b : game.bullets) d += len(b.pos - muzzle);
+                    firstSplitDist = d / (double)game.bullets.size();
+                }
+                for (const Bullet& b : game.bullets) {
+                    maxGen = std::max(maxGen, b.gen);
+                    if (!b.homing) allHoming = false;
+                    if (b.gen > rules::FRACTAL_SPLITS) neverPastFive = false;
+                    if (b.gen >= 0 && std::fabs(b.power - std::pow(rules::FRACTAL_CHILD, (float)b.gen)) > 1e-4f) powerLaw = false;
+                }
+                if (game.bullets.empty()) break;
+            }
+            printf("      one shell: peak %d pieces at once, deepest generation %d, first split %.0f units from the muzzle\n",
+                   (int)peak, maxGen, firstSplitDist);
+            check(maxGen == rules::FRACTAL_SPLITS, "it splits five times and no more");
+            check(neverPastFive, "no piece is ever a sixth generation");
+            check(peak == 32, "so one shell becomes 32 pieces at its most");
+            check(allHoming, "every piece is a homing device");
+            check(powerLaw, "each generation is exactly 0.45 of the one before (half, less a tenth)");
+            check(std::fabs(rules::FRACTAL_CHILD - 0.5f * 0.9f) < 1e-6f, "and 0.45 is 50% minus 10%");
+            check(std::fabs(firstSplitDist - 200.0) < 40.0, "the first split comes after the interval the cursor distance asked for");
+        }
+        {   // the same shot with the cursor twice as far away splits later
+            double dNear = 0, dFar = 0;
+            for (int pass = 0; pass < 2; ++pass) {
+                game.bullets.clear();
+                const dv2 muzzle(C.x + 16.0, C.y);
+                fireAt(pass == 0 ? 300.0f : 900.0f, 0.0f);
+                for (int i = 0; i < 60 * 3 && game.bullets.size() < 2; ++i) runFrames(1);
+                double d = 0;
+                for (const Bullet& b : game.bullets) d += len(b.pos - muzzle);
+                (pass == 0 ? dNear : dFar) = d / std::max<size_t>(1, game.bullets.size());
+            }
+            printf("      cursor at 300 units: first split after %.0f; cursor at 900: after %.0f\n", dNear, dFar);
+            check(dFar > dNear * 2.0, "a far cursor really does make it fly further before it divides");
+        }
+
+        // ---- the pieces hunt different targets
+        struct Hunt { float fractal[2] = { 0, 0 }; float heavy[2] = { 0, 0 }; int alive[2] = { 0, 0 }; };
+        Hunt hunt;
+        {
+            auto arena = [&](float hp) {
+                game.bullets.clear();  game.enemies.clear();  game.waves.clear();
+                Enemy a = plainDrone(dv2(C.x + 700.0, C.y + 300.0));
+                Enemy b = plainDrone(dv2(C.x + 700.0, C.y - 300.0));
+                a.hp = a.maxHp = b.hp = b.maxHp = hp;
+                game.enemies.push_back(a);  game.enemies.push_back(b);
+                return std::make_pair(a.id, b.id);
+            };
+            auto lost = [&](int id) { const Enemy* e = game.findEnemy(id); return e ? e->maxHp - e->hp : 1e6f; };
+            {   // a single ordinary homing shell, for comparison
+                const auto ids = arena(1e6f);
+                hold();  game.pl.aim = 0.0f;  game.pl.heavyCd = 0.0f;
+                game.fire(game.pl, true);
+                for (int i = 0; i < 60 * 4; ++i) runFrames(1);
+                hunt.heavy[0] = lost(ids.first);  hunt.heavy[1] = lost(ids.second);
+            }
+            {   // the fractal shell, same shot
+                const auto ids = arena(1e6f);
+                fireAt(700.0f, 0.0f);
+                for (int i = 0; i < 60 * 5; ++i) runFrames(1);
+                hunt.fractal[0] = lost(ids.first);  hunt.fractal[1] = lost(ids.second);
+            }
+            printf("      damage to the two drones: homing shell %.0f / %.0f,  fractal shell %.0f / %.0f\n",
+                   hunt.heavy[0], hunt.heavy[1], hunt.fractal[0], hunt.fractal[1]);
+            check(hunt.heavy[0] + hunt.heavy[1] > 0.0f, "the ordinary homing shell finds one of them");
+            check(hunt.heavy[0] == 0.0f || hunt.heavy[1] == 0.0f, "and only one, since it is one shell");
+            check(hunt.fractal[0] > 0.0f && hunt.fractal[1] > 0.0f, "the fractal shell's pieces find both, each hunting its own");
+            const float fr = hunt.fractal[0] + hunt.fractal[1], he = hunt.heavy[0] + hunt.heavy[1];
+            check(fr > he * 2.0f, "and a single fractal shell does more than twice the damage of a homing shell");
+
+            // Ordinary drones die to it.
+            {
+                game.bullets.clear();  game.enemies.clear();
+                Enemy a = plainDrone(dv2(C.x + 700.0, C.y + 300.0));
+                Enemy b = plainDrone(dv2(C.x + 700.0, C.y - 300.0));
+                Enemy c2 = plainDrone(dv2(C.x + 1000.0, C.y));
+                game.enemies.push_back(a);  game.enemies.push_back(b);  game.enemies.push_back(c2);
+                fireAt(700.0f, 0.0f);
+                for (int i = 0; i < 60 * 5; ++i) runFrames(1);
+                int left = 0;
+                for (const Enemy& e : game.enemies) if (e.alive) ++left;
+                printf("      three ordinary drones: %d left standing\n", left);
+                check(left == 0, "one shell clears three ordinary drones");
+            }
+        }
+
+        // ---- pieces choose different targets even when they would rather share
+        {
+            game.bullets.clear();  game.enemies.clear();
+            Enemy a = plainDrone(dv2(C.x + 800.0, C.y + 350.0));
+            Enemy b = plainDrone(dv2(C.x + 800.0, C.y - 350.0));
+            game.enemies.push_back(a);  game.enemies.push_back(b);
+            fireAt(200.0f, 0.0f);                                   // splits very soon
+            for (int i = 0; i < 90; ++i) {                          // run until the first generation of pieces exists
+                runFrames(1);
+                bool have = false;
+                for (const Bullet& bl : game.bullets) if (bl.gen == 1) have = true;
+                if (have) break;
+            }
+            std::vector<int> targets;
+            for (const Bullet& bl : game.bullets) if (bl.gen == 1) targets.push_back(bl.targetId);
+            std::sort(targets.begin(), targets.end());
+            printf("      the two first-generation pieces are chasing targets %d and %d\n",
+                   targets.size() > 0 ? targets[0] : -1, targets.size() > 1 ? targets[1] : -1);
+            check(targets.size() == 2 && targets[0] != targets[1] && targets[0] != 0, "the two pieces are given different targets");
+        }
+
+        // ---- carving rock
+        {
+            game.bullets.clear();  game.enemies.clear();
+            const dv2 R(C.x + 350.0, C.y);
+            const int slot = game.world.spawn(R, 90.0f, 4242u);
+            game.world.step(dt, C);
+            auto solid = [&]() { return slot >= 0 && game.world.bodies[slot].alive ? game.world.summarise(slot).solid : 0u; };
+            const uint32_t before = solid();
+            fireAt(350.0f, 0.0f);
+            for (int i = 0; i < 60 * 3; ++i) runFrames(1);
+            uint32_t after = 0;
+            for (int s : game.world.active) {
+                const Body& b = game.world.bodies[s];
+                if (b.alive && len(b.pos - R) < 250.0) after += game.world.summarise(s).solid;
+            }
+            printf("      a rock of %u solid samples has %u left within reach after one shell\n", before, after);
+            check(before > 0 && after < before, "a fractal shell carves rock like any other");
+        }
+
+        // ---- ammunition, cooldown, ownership
+        {
+            game.bullets.clear();  game.enemies.clear();
+            game.pl.hasFractal = false;  game.pl.fractalAmmo = 5;  game.pl.fractalCd = 0.0f;
+            game.fireFractal(500.0f);
+            check(game.bullets.empty() && game.pl.fractalAmmo == 5, "without the weapon, nothing happens");
+            game.pl.hasFractal = true;  game.pl.fractalAmmo = 0;
+            game.fireFractal(500.0f);
+            check(game.bullets.empty(), "without shells, nothing happens");
+            game.pl.fractalAmmo = 2;  game.pl.fractalCd = 0.0f;
+            game.fireFractal(500.0f);
+            check(game.bullets.size() == 1 && game.pl.fractalAmmo == 1, "a shot costs one shell");
+            game.fireFractal(500.0f);
+            check(game.bullets.size() == 1 && game.pl.fractalAmmo == 1, "and there is a cooldown between shots");
+            check(game.pl.fractalCd > 1.0f, "a long one");
+            game.bullets.clear();
+            // Z through the real input path
+            game.pl.fractalCd = 0.0f;  game.pl.fractalAmmo = 3;
+            Input z;  z.pressed['Z'] = true;  z.mousePx = v2(renderer.fbw * 0.8f, renderer.fbh * 0.5f);
+            hold();
+            game.update(renderer, z, dt);
+            check(game.pl.fractalAmmo == 2 && !game.bullets.empty(), "the Z key fires it");
+            check(game.lastAimDist > 50.0f, "and the distance to the cursor was measured (the cross is not on the spaceman)");
+        }
+
+        // ---- the depot: the dearest thing on the shelf
+        {
+            game.startRun(renderer);
+            game.invincible = true;
+            check(ITEM_COUNT == 6 && ITEM_FRACTAL == 5, "the depot has a sixth row");
+            int dearest = 0;
+            for (int i = 0; i < ITEM_COUNT; ++i) if (i != ITEM_FRACTAL) dearest = std::max(dearest, game.priceOf(i));
+            printf("      price %d credits (the next dearest thing is %d)\n", game.priceOf(ITEM_FRACTAL), dearest);
+            check(game.priceOf(ITEM_FRACTAL) > dearest * 2, "it costs more than twice anything else in the depot");
+            check(rules::PRICE_FRACTAL / rules::FRACTAL_LOAD > rules::PRICE_NUKE / rules::NUKE_PACK * 2, "and each shell costs more than twice a nuke");
+
+            game.credits = rules::PRICE_FRACTAL - 1;
+            check(!game.buy(ITEM_FRACTAL) && !game.pl.hasFractal, "one credit short buys nothing");
+            game.credits = rules::PRICE_FRACTAL;
+            check(game.buy(ITEM_FRACTAL) && game.pl.hasFractal && game.credits == 0, "the price unlocks it");
+            check(game.pl.fractalAmmo == rules::FRACTAL_LOAD, "with its first load");
+            game.credits = 5000;
+            check(game.priceOf(ITEM_FRACTAL) == rules::PRICE_FRACTAL_AMMO, "more shells are cheaper than the launcher");
+            game.buy(ITEM_FRACTAL);
+            check(game.pl.fractalAmmo == 2 * rules::FRACTAL_LOAD && game.credits == 5000 - rules::PRICE_FRACTAL_AMMO, "and add another load");
+            while (game.pl.fractalAmmo < rules::FRACTAL_MAX) game.buy(ITEM_FRACTAL);
+            const int cr = game.credits;
+            check(!game.buy(ITEM_FRACTAL) && game.credits == cr && game.pl.fractalAmmo == rules::FRACTAL_MAX, "the magazine is capped, and a full one costs nothing");
+
+            // through the menu: the 6 key
+            game.pl.hasFractal = false;  game.pl.fractalAmmo = 0;
+            game.credits = 2000;
+            game.state = State::Shop;
+            Input six;  six.pressed['6'] = true;
+            game.update(renderer, six, dt);
+            check(game.pl.hasFractal && game.credits == 2000 - rules::PRICE_FRACTAL, "the 6 key buys it in the depot");
+            game.state = State::Playing;
+        }
+
+        // ---- a picture of it, mid-cascade, with the depot row
+        {
+            game.startRun(renderer);
+            game.invincible = true;  game.floating = true;
+            game.startLevel(3);
+            game.level.slots.clear();  game.level.diff.droneSpeed = 0.0f;
+            openSpot(C);
+            game.pl.hasFractal = true;  game.pl.fractalAmmo = 3;
+            game.cam.halfW = game.zoomTarget = 420.0f;
+            game.bullets.clear();  game.enemies.clear();
+            for (int k = 0; k < 5; ++k) {
+                Enemy e = plainDrone(dv2(C.x + 600.0 + 30.0 * (k % 2), C.y + (k - 2) * 105.0));
+                e.hp = e.maxHp = 1e6f;
+                game.enemies.push_back(e);
+            }
+            fireAt(300.0f, 0.0f);                                   // a near cursor: it divides quickly, in view
+            char path[600];
+            game.level.banner = 0.0f;                               // no intro text over the picture
+            for (int i = 0; i < 60 * 3; ++i) {
+                runFrames(1);
+            const int shots[3] = { 16, 26, 36 };
+                for (int k = 0; k < 3; ++k)
+                    if (i == shots[k]) {
+                        {   // where is everything? (the picture is the check on this, so say so in numbers too)
+                            printf("      frame %d: pieces by generation:", i);
+                            int perGen[8] = {};
+                            double reach = 0;
+                            for (const Bullet& b : game.bullets) { if (b.gen >= 0 && b.gen < 8) ++perGen[b.gen]; reach = std::max(reach, b.pos.x - C.x); }
+                            for (int g = 0; g <= 5; ++g) printf(" %d", perGen[g]);
+                            printf("   furthest piece %.0f units out; drones at", reach);
+                            for (const Enemy& e : game.enemies) printf(" %.0f", e.pos.x - C.x);
+                            printf("\n");
+                            game.cam.pos = dv2(C.x + 300.0, C.y);         // look at the action, not at the spaceman
+                        }
+                        game.render(renderer);
+                        snprintf(path, sizeof path, "%s_fractal%d.png", shotPath, k);
+                        renderer.screenshot(path);
+                    }
+            }
+            game.startRun(renderer);
+            game.credits = 3000;
+            game.pl.hasFractal = true;  game.pl.fractalAmmo = 4;
+            game.state = State::Shop;
+            for (int i = 0; i < 3; ++i) game.update(renderer, idle, dt);
+            game.render(renderer);
+            snprintf(path, sizeof path, "%s_fractal_shop.png", shotPath);
+            renderer.screenshot(path);
+            check(true, "the shell and the depot row draw");
+        }
+
+        printf("fractaltest: %s\n", failures == 0 ? "PASS" : "FAIL");
+        fflush(stdout);
+        renderer.shutdown();
+        return failures == 0 ? 0 : 1;
     }
 
     if (weaponTest) {

@@ -42,7 +42,7 @@ void Game::steerHoming(Bullet& b, float dt) {
     const float sp = len(b.vel);
     const float have = std::atan2(b.vel.y, b.vel.x);
     const float want = std::atan2(rel.y, rel.x);
-    const float turn = rules::HOMING_TURN * dt;
+    const float turn = (b.gen >= 0 ? rules::FRACTAL_TURN : rules::HOMING_TURN) * dt;
     b.vel = fromAngle(have + clampf(wrapAngle(want - have), -turn, turn)) * sp;
 }
 
@@ -337,4 +337,116 @@ void Game::drawShield(Renderer& r) {
     r.line(p + fromAngle(a0) * (R - 7.0f), p + fromAngle(a0) * (R + 7.0f), c, I);
     r.line(p + fromAngle(a1) * (R - 7.0f), p + fromAngle(a1) * (R + 7.0f), c, I);
     r.arc(p, R - 10.0f, a0, a1, 8, c, 0.9f * blink);
+}
+
+// ---------------------------------------------------------- fractal shell --
+// One shot, up to 32 pieces. The parent flies like a homing shell, and every so often
+// it comes apart into two, which fly apart a little and each carry on homing, each
+// on a different target where there is more than one. A child has 0.45 of its
+// parent's strength (half, less a tenth), and a piece that is five generations down
+// stops splitting. How often it splits depends on how far away you are pointing:
+// aim close and it divides quickly into a cloud; aim far and it flies a long way as
+// one heavy shell before it starts.
+static Col fractalColour(int gen) {
+    const float t = clampf(gen / (float)rules::FRACTAL_SPLITS, 0.0f, 1.0f);
+    return mix(Col(0.90f, 0.35f, 1.35f), Col(0.25f, 1.20f, 1.05f), t);       // violet, going to cyan
+}
+
+float Game::fractalSplitDistance(float aimDist) {
+    return clampf(rules::FRACTAL_SPLIT_K * aimDist, rules::FRACTAL_SPLIT_MIN, rules::FRACTAL_SPLIT_MAX);
+}
+
+// How long a piece needs to live to get through all the splits still ahead of it.
+static float fractalLife(int gen, float splitEvery) {
+    const int left = rules::FRACTAL_SPLITS - gen + 1;
+    return clampf(left * splitEvery / rules::FRACTAL_SPEED + 2.0f, 3.0f, 9.0f);
+}
+
+void Game::fireFractal(float aimDist) {
+    if (!pl.hasFractal || pl.fractalAmmo <= 0 || pl.fractalCd > 0.0f || state != State::Playing) return;
+    --pl.fractalAmmo;
+    pl.fractalCd = rules::FRACTAL_COOLDOWN;
+
+    const v2 dir = fromAngle(pl.aim);
+    Bullet b;
+    b.pos = dv2(pl.pos.x + dir.x * 16.0, pl.pos.y + dir.y * 16.0);
+    b.vel = dir * rules::FRACTAL_SPEED + pl.vel;
+    b.caliber = rules::FRACTAL_CAL;
+    b.gravScale = 6.0f;
+    b.budget = tune::HEAVY_PEN;
+    b.heavy = true;
+    b.homing = true;
+    b.owner = pl.id;
+    b.gen = 0;
+    b.power = 1.0f;
+    b.splitEvery = fractalSplitDistance(aimDist);
+    b.life = fractalLife(0, b.splitEvery);
+    b.col = fractalColour(0);
+    bullets.push_back(b);
+
+    pl.vel -= dir * 90.0f;
+    shake = std::max(shake, 0.45f);
+    sfx(Sfx::FractalFire, pl.pos, 1.0f, sfxRng.range(0.97f, 1.03f), 2400.0f);
+    spawnSparks(b.pos, dir * 80.0f, 14, 170.0f, b.col, 0.25f);
+}
+
+void Game::splitFractal(const Bullet& parent) {
+    const v2 dir = norm(parent.vel);
+    const float speed = len(parent.vel);
+
+    // The two best targets from here: the ones nearest, and nearest to where it is heading.
+    struct Cand { int id; float cost; float side; };
+    std::vector<Cand> cands;
+    for (const Enemy& e : enemies) {
+        if (!e.alive) continue;
+        const v2 rel = tov2(e.pos - parent.pos);
+        const float d = len(rel);
+        if (d > rules::HOMING_RANGE * 1.3f || d < 1.0f) continue;
+        const float c = dot(rel / d, dir);
+        if (c < -0.2f) continue;
+        cands.push_back({ e.id, d * (1.6f - c), cross(dir, rel / d) });
+    }
+    std::sort(cands.begin(), cands.end(), [](const Cand& a, const Cand& b) { return a.cost < b.cost; });
+    int left = 0, right = 0;                     // target ids for the child that turns left, and the one that turns right
+    if (!cands.empty()) {
+        left = right = cands[0].id;
+        if (cands.size() > 1) {                  // two targets: the one on the left goes to the left-hand child
+            const bool firstIsLeft = cands[0].side >= cands[1].side;
+            left  = firstIsLeft ? cands[0].id : cands[1].id;
+            right = firstIsLeft ? cands[1].id : cands[0].id;
+        }
+    }
+
+    const float rootP = std::sqrt(rules::FRACTAL_CHILD);
+    for (int s = 0; s < 2; ++s) {
+        const float turn = (s == 0 ? 1.0f : -1.0f) * rules::FRACTAL_SPREAD;
+        Bullet c = parent;
+        c.gen = parent.gen + 1;
+        c.power = parent.power * rules::FRACTAL_CHILD;
+        c.travel = 0.0f;
+        c.vel = rot(dir, turn) * speed;
+        c.caliber = std::max(rules::FRACTAL_MIN_CAL, parent.caliber * rootP);
+        c.budget = parent.budget * rootP;
+        c.life = std::max(parent.life, fractalLife(c.gen, c.splitEvery));
+        c.targetId = s == 0 ? left : right;
+        c.col = fractalColour(c.gen);
+        if ((int)bullets.size() < 900) bullets.push_back(c);
+    }
+    // A small flash and a chirp where it divided; the sound climbs with the generation.
+    const float small = std::sqrt(parent.power);
+    ring(parent.pos, 22.0f + 36.0f * small, 0.32f, parent.col, 1.0f);
+    spawnSparks(parent.pos, parent.vel * 0.3f, 6, 110.0f, parent.col, 0.25f);
+    sfx(Sfx::FractalSplit, parent.pos, 0.5f + 0.5f * small, 1.0f + 0.10f * parent.gen, 1800.0f);
+}
+
+// A heavy shell going off where it landed. Ordinary ones use the fixed numbers; a fractal
+// piece scales them by its strength, and its blast radius by the square root of it.
+void Game::shellBurst(const Bullet& b) {
+    if (b.gen >= 0) {
+        const float s = std::sqrt(b.power);
+        boom(b.pos, 12.0f + 18.0f * s, b.col);
+        explode(b.pos, rules::FRACTAL_SPLASH_R * s, rules::FRACTAL_DAMAGE * b.power, 0, 0, 0, false);
+    } else {
+        explode(b.pos, rules::HEAVY_SPLASH_R, rules::HEAVY_DAMAGE, 0, 0, 0, false);
+    }
 }

@@ -107,8 +107,22 @@ freezes and the depot opens. Click a row, or press its number:
 | **Nuke** | `N` | 400 for 3 | A slow grenade, dragged hard by gravity, with a 3.6 s fuse shown on the bomb itself. A huge blast: it vaporises rock, kills everything in its radius and hurts you if you are close. |
 | **Force field** | `X` | 500 | A bubble that shoves bullets, missiles, drones and rocks away. Costs energy while it is on. |
 | **Blast shield** | hold Left Alt | 350, then 120 to refill | A 30 degree plate held toward the cursor. It stops bullets and missiles that reach it and soaks up blasts that go off inside its arc, spending charge equal to the damage it stops. When it is empty it stays down until you refill it. |
+| **Fractal shell** | `Z` | 1400 (3 shells), then 500 for 3 more | The most expensive thing in the depot, and the most powerful against groups. A homing shell that **splits in two** every so often, up to **five times**, so one shot can become **32 pieces**, and every piece homes on its own target. Each generation is **0.45** of the one before (half, less a tenth), so its power is spread across a swarm rather than spent in one place. |
 
 Purchases last for the run. Nukes can only be bought, never found.
+
+**The fractal shell** is worth understanding, because how you aim it changes what it does. *How far the cursor is from the spaceman decides how far the shell flies between splits*: 40% of that distance, never less than 90 units or more than 1100. Point at something close and it divides almost at once into a cloud that spreads over a cluster; point far away and it flies a long way as a single heavy shell, then divides late, over the target. Whenever it splits, the two pieces leave the parent's line by about 17 degrees and are each given a *different* target, the one on the left to the left-hand piece, so a volley spreads over a group rather than piling onto the nearest enemy.
+
+| Generation | Pieces | Strength | Blast damage | Blast radius |
+| --- | --- | --- | --- | --- |
+| 0 (the shell) | 1 | 100% | 240 | 85 |
+| 1 | 2 | 45% | 108 | 57 |
+| 2 | 4 | 20% | 49 | 38 |
+| 3 | 8 | 9% | 22 | 26 |
+| 4 | 16 | 4% | 10 | 17 |
+| 5 (does not split) | 32 | 1.8% | 4 | 11 |
+
+Damage falls off toward the edge of a blast, and a piece that hits something bursts there without splitting further. In the test (`-fractaltest`) one shell did about **3.4 times the damage of a homing shell** to two drones 600 units apart, where the homing shell can only find one of them, and one shell cleared three ordinary drones.
 
 ### Sound
 
@@ -274,6 +288,7 @@ onward). Nothing to install or download.
 | `G` | Missile salvo, once bought |
 | `N` | Throw a nuke, once bought |
 | `X` | Force field on/off, once bought |
+| `Z` | Fractal shell, once bought |
 | Wheel / `Q` / `E` | Zoom out and in |
 | `C` | Camera: fixed (default) or POV, where the world rolls so you stay upright |
 | `R` | Restart the run from level 1 |
@@ -325,6 +340,7 @@ Test harnesses. Each prints `PASS`/`FAIL` (or a summary) and exits:
     -name NAME       what you are called in a match (default PILOT)
     -loopback        with -host: listen on this machine only (for testing; no firewall prompt)
     -versustest      versus rules, respawns, frag limit, bots
+    -fractaltest     the fractal shell: split distance, the 0.45 law, homing, damage, price
     -netgametest     two and three whole games in one process, over lossy links and real sockets
     -nosound         start without sound
     -volume V        master volume, 0 to 1.5                     (default 0.8)

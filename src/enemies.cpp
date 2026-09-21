@@ -163,7 +163,7 @@ bool Game::bulletHitsTargets(Bullet& b) {
         const float reach = e.radius + b.caliber;
         const double dx = e.pos.x - b.pos.x, dy = e.pos.y - b.pos.y;
         if (dx * dx + dy * dy > (double)reach * reach) continue;
-        if (b.heavy) explode(b.pos, rules::HEAVY_SPLASH_R, rules::HEAVY_DAMAGE, 0, 0, 0, false);
+        if (b.heavy) shellBurst(b);
         else         damageEnemy(e, rules::RIFLE_DAMAGE, b.pos);
         return true;
     }
@@ -173,7 +173,7 @@ bool Game::bulletHitsTargets(Bullet& b) {
         const float bound = s.radius + b.caliber;
         if (len2(tov2(b.pos - s.pos)) > bound * bound) continue;
         if (hullDistance(s, b.pos) > b.caliber * 0.5f) continue;
-        if (b.heavy) explode(b.pos, rules::HEAVY_SPLASH_R, rules::HEAVY_DAMAGE, 0, 0, 0, false);
+        if (b.heavy) shellBurst(b);
         else {
             damageShip(s, rules::RIFLE_DAMAGE * rules::SHIP_RIFLE_FACTOR, b.pos);
             spawnSparks(b.pos, b.vel * -0.1f, 2, 120.0f, Col(1.0f, 0.9f, 0.7f), 0.25f);

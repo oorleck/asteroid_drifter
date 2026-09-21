@@ -140,6 +140,10 @@ void Game::updateBullets(float dt) {
             b.pos.x += (double)b.vel.x * sdt;
             b.pos.y += (double)b.vel.y * sdt;
             if (bulletHitsTargets(b) || (versus && bulletHitsPlayers(b))) { spent = true; break; }
+            if (b.gen >= 0) {                         // a fractal shell divides after every so often
+                b.travel += stepLen;
+                if (b.gen < rules::FRACTAL_SPLITS && b.travel >= b.splitEvery) { splitFractal(b); spent = true; break; }
+            }
             const int hit = world.solidAt(b.pos);
             if (hit < 0) continue;
             if (netClient) {                          // the host decides what a round does to a rock
@@ -167,7 +171,10 @@ void Game::updateBullets(float dt) {
                             b.heavy ? 340.0f : 170.0f,
                             b.heavy ? Col(1.0f, 0.6f, 0.3f) : Col(1.0f, 0.85f, 0.5f),
                             b.heavy ? 0.9f : 0.4f);
-                if (b.heavy) {
+                if (b.gen >= 0) {                     // a fractal piece bursts in the rock as hard as its strength
+                    shake = std::max(shake, 0.25f + 0.35f * std::sqrt(b.power));
+                    shellBurst(b);
+                } else if (b.heavy) {
                     shake = std::max(shake, 0.6f);
                     // A shell going off in the rock still shreds anything nearby.
                     explodeOwner = b.owner;
@@ -221,8 +228,9 @@ void Game::updatePlayer(Renderer& r, const Input& in, float dt) {
     // The shader rolls world space by cam.angle on its way to the screen, so
     // undo that roll to turn the cursor back into a world direction.
     const v2 off = rot(v2(nx, ny), std::cos(-cam.angle), std::sin(-cam.angle));
-    v2 aimDir = norm(v2((float)(cam.pos.x + off.x - pl.pos.x),
-                        (float)(cam.pos.y + off.y - pl.pos.y)));
+    const v2 toCursor((float)(cam.pos.x + off.x - pl.pos.x), (float)(cam.pos.y + off.y - pl.pos.y));
+    lastAimDist = len(toCursor);                 // how far away the cross is: the fractal shell splits by it
+    v2 aimDir = norm(toCursor);
     if (len2(aimDir) < 0.25f) aimDir = fromAngle(pl.aim);
 
     // ---- force field (only once bought): X switches it on and off
@@ -253,8 +261,10 @@ void Game::updatePlayer(Renderer& r, const Input& in, float dt) {
 
     pl.nukeCd  -= dt;
     pl.salvoCd -= dt;
+    pl.fractalCd -= dt;
     if (in.pressed['N']) throwNuke(aimDir);
     if (in.pressed['G']) fireSalvo(aimDir);
+    if (in.pressed['Z']) fireFractal(lastAimDist);
 }
 
 // One frame of one player's life: rocket, gravity, contact with rock, walking,
@@ -667,6 +677,17 @@ void Game::render(Renderer& r) {
     for (const Bullet& b : bullets) {
         const v2 p((float)(b.pos.x - cam.pos.x), (float)(b.pos.y - cam.pos.y));
         const v2 d = norm(b.vel);
+        if (b.gen >= 0) {
+            // A fractal piece: a diamond that shrinks with every split, and a tail that shortens with it.
+            const float sz = std::sqrt(b.power);
+            const float rad = 2.4f + 5.0f * sz;
+            const v2 n = perp(d);
+            r.line(p, p - d * (8.0f + 20.0f * sz), b.col, 2.0f + 0.8f * sz);
+            const v2 dia[4] = { p + d * (rad * 1.5f), p + n * rad, p - d * (rad * 1.5f), p - n * rad };
+            r.poly(dia, 4, true, b.col, 2.4f);
+            r.point(p, 2.0f + 3.0f * sz, b.col, 2.0f);
+            continue;
+        }
         const float tail = b.heavy ? 16.0f : 26.0f;
         r.line(p, p - d * tail, b.col, b.heavy ? 2.6f : 2.0f);
         if (b.heavy) r.circle(p, 6.0f, 9, b.col, 2.0f);
@@ -739,6 +760,12 @@ void Game::drawHud(Renderer& r) {
         const float frac = 1.0f - clampf(pl.salvoCd / rules::SALVO_COOLDOWN, 0.0f, 1.0f);
         snprintf(buf, sizeof buf, "MISSILE SALVO  [G]   X%d", pl.salvoAmmo);
         bar(m, y, bw, bh, frac, pal::SALVO, buf, pl.salvoAmmo == 0);
+        y += gap;
+    }
+    if (pl.hasFractal) {
+        const float frac = 1.0f - clampf(pl.fractalCd / rules::FRACTAL_COOLDOWN, 0.0f, 1.0f);
+        snprintf(buf, sizeof buf, "FRACTAL SHELL  [Z]   X%d", pl.fractalAmmo);
+        bar(m, y, bw, bh, frac, pal::FRACTAL, buf, pl.fractalAmmo == 0);
         y += gap;
     }
     if (pl.nukeAmmo > 0) {   // nuke ammunition, one pip per warhead
@@ -876,6 +903,7 @@ void Game::drawHud(Renderer& r) {
         if (pl.hasShield) n += snprintf(l2 + n, sizeof l2 - n, "     BLAST SHIELD  HOLD LEFT ALT");
         if (pl.hasHoming) n += snprintf(l2 + n, sizeof l2 - n, "     HOMING SHELL  F");
         if (pl.hasSalvo)  n += snprintf(l2 + n, sizeof l2 - n, "     MISSILES  G");
+        if (pl.hasFractal) n += snprintf(l2 + n, sizeof l2 - n, "     FRACTAL SHELL  Z");
         if (pl.nukeAmmo)  n += snprintf(l2 + n, sizeof l2 - n, "     NUKE  N");
         if (pl.hasField)  n += snprintf(l2 + n, sizeof l2 - n, "     FORCE FIELD  X");
         snprintf(l3, sizeof l3, "CAMERA  C     ZOOM  WHEEL / Q / E     RESTART  R     PAUSE  P     HELP  H");

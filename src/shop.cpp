@@ -13,6 +13,7 @@ bool Game::owned(int item) const {
         case ITEM_SALVO:  return pl.hasSalvo;       // the launcher; ammo is separate
         case ITEM_FIELD:  return pl.hasField;
         case ITEM_SHIELD: return pl.hasShield;      // fitted; the charge is separate
+        case ITEM_FRACTAL: return pl.hasFractal;    // the launcher; the shells are separate
         default:          return false;
     }
 }
@@ -24,6 +25,7 @@ int Game::priceOf(int item) const {
         case ITEM_NUKE:   return rules::PRICE_NUKE;
         case ITEM_FIELD:  return rules::PRICE_FIELD;
         case ITEM_SHIELD: return pl.hasShield ? rules::PRICE_SHIELD_REFILL : rules::PRICE_SHIELD;
+        case ITEM_FRACTAL: return pl.hasFractal ? rules::PRICE_FRACTAL_AMMO : rules::PRICE_FRACTAL;
         default:          return 0;
     }
 }
@@ -36,6 +38,7 @@ bool Game::canBuy(int item) const {
         case ITEM_NUKE:   return pl.nukeAmmo < rules::NUKE_MAX;
         case ITEM_FIELD:  return !pl.hasField;
         case ITEM_SHIELD: return !pl.hasShield || pl.shield < rules::SHIELD_CAPACITY - 0.5f;
+        case ITEM_FRACTAL: return pl.fractalAmmo < rules::FRACTAL_MAX;
         default:          return false;
     }
 }
@@ -57,7 +60,8 @@ bool Game::buy(int item) {
         return false;
     }
     if ((item == ITEM_SALVO && pl.salvoAmmo >= rules::SALVO_MAX) ||
-        (item == ITEM_NUKE  && pl.nukeAmmo  >= rules::NUKE_MAX)) {
+        (item == ITEM_NUKE  && pl.nukeAmmo  >= rules::NUKE_MAX) ||
+        (item == ITEM_FRACTAL && pl.fractalAmmo >= rules::FRACTAL_MAX)) {
         note("MAGAZINE FULL", true);
         return false;
     }
@@ -80,6 +84,11 @@ bool Game::buy(int item) {
         case ITEM_NUKE:
             pl.nukeAmmo = std::min(rules::NUKE_MAX, pl.nukeAmmo + rules::NUKE_PACK);
             note("NUKES LOADED   -   PRESS N", false);
+            break;
+        case ITEM_FRACTAL:
+            pl.hasFractal = true;
+            pl.fractalAmmo = std::min(rules::FRACTAL_MAX, pl.fractalAmmo + rules::FRACTAL_LOAD);
+            note("FRACTAL SHELLS LOADED   -   PRESS Z", false);
             break;
         case ITEM_FIELD:
             pl.hasField = true;
@@ -104,7 +113,7 @@ void Game::shopRect(int row, float W, float H, float& x, float& y, float& w, flo
     const float s = clampf(H / 900.0f, 0.7f, 2.0f);
     const float panelW = 700.0f * s;
     const float top = H * 0.5f - 280.0f * s;
-    const float rowH = 60.0f * s, gap = 9.0f * s;
+    const float rowH = 52.0f * s, gap = 6.0f * s;
     x = W * 0.5f - panelW * 0.5f + 18.0f * s;
     w = panelW - 36.0f * s;
     if (row < ITEM_COUNT) {
@@ -169,14 +178,15 @@ void Game::drawShop(Renderer& r) {
 
     static const char* names[ITEM_COUNT] = {
         "HOMING SHELL   [F]", "MISSILE SALVO   [G]", "NUKE   [N]", "FORCE FIELD   [X]",
-        "BLAST SHIELD   [LEFT ALT]" };
+        "BLAST SHIELD   [LEFT ALT]", "FRACTAL SHELL   [Z]" };
     static const char* descs[ITEM_COUNT] = {
         "Charge shot that curves onto the nearest enemy.",
         "Five missiles, each hunting a different target.",
         "Timed grenade with a huge blast. Pack of three.",
         "Bubble that pushes bullets, missiles, drones and rocks away.",
-        "A 30 degree plate toward the cursor. Stops fire and blasts." };
-    static const Col accents[ITEM_COUNT] = { pal::HOMING, pal::SALVO, pal::NUKE, pal::FIELD, pal::SHIELD };
+        "A 30 degree plate toward the cursor. Stops fire and blasts.",
+        "Splits in two, five times over. Every piece homes." };
+    static const Col accents[ITEM_COUNT] = { pal::HOMING, pal::SALVO, pal::NUKE, pal::FIELD, pal::SHIELD, pal::FRACTAL };
 
     for (int i = 0; i < ITEM_COUNT; ++i) {
         float x, y, w, h;
@@ -218,10 +228,15 @@ void Game::drawShop(Renderer& r) {
             if (pl.hasSalvo) snprintf(sub, sizeof sub, "+%d SALVOS  (HAVE %d/%d)",
                                       rules::SALVO_LOAD, pl.salvoAmmo, rules::SALVO_MAX);
             else             snprintf(sub, sizeof sub, "%d SALVOS INCLUDED", rules::SALVO_LOAD);
+        } else if (i == ITEM_FRACTAL) {
+            snprintf(right, sizeof right, "%d CR", priceOf(i));
+            if (pl.hasFractal) snprintf(sub, sizeof sub, "+%d SHELLS  (HAVE %d/%d)",
+                                        rules::FRACTAL_LOAD, pl.fractalAmmo, rules::FRACTAL_MAX);
+            else               snprintf(sub, sizeof sub, "%d SHELLS INCLUDED", rules::FRACTAL_LOAD);
         } else if (i == ITEM_SHIELD) {
             snprintf(right, sizeof right, "%d CR", priceOf(i));
             if (pl.hasShield) snprintf(sub, sizeof sub, "CHARGE %d%%", (int)(pl.shield + 0.5f));
-            else              snprintf(sub, sizeof sub, "FITTED FULLY CHARGED");
+            else              snprintf(sub, sizeof sub, "FITTED, FULL");
         } else if (i == ITEM_NUKE) {
             snprintf(right, sizeof right, "%d CR", priceOf(i));
             snprintf(sub, sizeof sub, "HAVE %d/%d", pl.nukeAmmo, rules::NUKE_MAX);

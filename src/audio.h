@@ -15,7 +15,7 @@
 
 enum class Sfx : int {
     // your weapons
-    Rifle, Shell, Salvo, NukeThrow, NukeBeep, NukeBoom,
+    Rifle, Shell, Salvo, FractalFire, FractalSplit, NukeThrow, NukeBeep, NukeBoom,
     // things going bang
     ExplodeS, ExplodeM, ExplodeL,
     // the enemy
