@@ -17,6 +17,8 @@ namespace rules {
     static const float DIST_MIN       = 2400.0f;
     static const float DIST_MAX       = 3400.0f;
     static const float DIST_GROWTH    = 0.04f;    // +4% distance per level
+    static const float DIST_SCALE     = 0.5f;     // the beacon is this share as far as those distances say (the clock is worked out from the unscaled ones)
+    static const float TIME_SCALE     = 1.2f;     // and the clock gets 20% more on top
     static const float DIST_CAP       = 9500.0f;
     static const float SPEED_BASE     = 72.0f;    // u/s the player must average on level 1
     static const float SPEED_GROWTH   = 3.0f;     // ...plus this much per level

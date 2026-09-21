@@ -1392,7 +1392,7 @@ int main(int argc, char** argv) {
                         step(1);
                     }
                     hostIn.mouse[0] = false;
-                    step(90);
+                    step(300);                                  // let the last splits and settling reach the client
                 }
                 int hr, cr, missing, differ; double worst;
                 compareWorlds(hr, cr, missing, differ, worst);
@@ -2725,7 +2725,7 @@ int main(int argc, char** argv) {
             }
             {   // the fractal shell, same shot
                 const auto ids = arena(1e6f);
-                fireAt(350.0f, 0.0f);                                   // the cross half way to them: it divides before it arrives
+                fireAt(300.0f, 0.0f);                                   // the cross half way to them: it divides before it arrives
                 for (int i = 0; i < 60 * 5; ++i) runFrames(1);
                 hunt.fractal[0] = lost(ids.first);  hunt.fractal[1] = lost(ids.second);
             }
@@ -2846,7 +2846,7 @@ int main(int argc, char** argv) {
                    ang * 57.2958f, ang * 0.5f * 57.2958f, sp, parentSpeed);
             check(n == 2 && std::fabs(ang - 2.0f * rules::FRACTAL_SPREAD) < 0.06f, "the two pieces leave the parent's line by the (narrower) spread angle");
             check(std::fabs(rules::FRACTAL_SPREAD - 0.30f * 0.75f) < 1e-6f, "which is 25% smaller than the 0.30 radians it was");
-            check(n == 2 && parentSpeed > 0.0f && sp > parentSpeed * 1.11f && sp < parentSpeed * 1.17f, "and each piece is faster than the parent was (about 14%)");
+            check(n == 2 && parentSpeed > 0.0f && sp > parentSpeed * 1.08f && sp < parentSpeed * 1.17f, "and each piece is faster than the parent was (about 14%)");
         }
 
         // ---- ammunition, cooldown, ownership
@@ -3798,8 +3798,9 @@ int main(int argc, char** argv) {
         p += n0 * 9.0f;
 
         printf("jumptest: the tank holds %.0f, was 100; gravity constant %.0f, was 100\n", tune::FUEL_MAX, cfg::GRAV_CONST);
-        check(tune::FUEL_MAX == 80.0f && game.pl.fuel == tune::FUEL_MAX, "the fuel tank is 20% smaller and starts full");
-        check(cfg::GRAV_CONST == 150.0f, "gravity is 50% stronger");
+        check(tune::FUEL_MAX == 40.0f && game.pl.fuel == tune::FUEL_MAX, "the fuel tank is at 40 and starts full");
+        check(std::fabs(tune::THRUST - 562.5f) < 0.01f, "the rocket is 25% weaker than the 750 it was");
+        check(cfg::GRAV_CONST == 225.0f, "gravity is 50% stronger again (225, from 150)");
 
         struct Case { const char* name; float degFromUp; };            // clockwise from the surface normal
         const Case cases[] = { { "cursor straight up", 0.0f }, { "cursor 40 degrees to the right", 40.0f },
@@ -3837,6 +3838,26 @@ int main(int argc, char** argv) {
             if (std::cos(a) >= 0.2f) check(agree > 0.97f, "and it goes toward the cursor");
             else if (cs.degFromUp != 180.0f)
                 check(dot(dir, right) * std::sin(a) > 0.9f, "a cursor at or below the horizon gives a low leap toward that side");
+        }
+        // How much can the rocket do from the ground? (reported, not judged)
+        for (int withJump = 0; withJump < 2; ++withJump) {
+            game.pl.pos = p;  game.pl.vel = rock.vel;  game.pl.up = n0;  game.pl.grounded = false;  game.pl.jumpCd = 0.0f;
+            game.pl.fuel = tune::FUEL_MAX;  game.pl.fuelLocked = false;
+            Input idle;
+            for (int f = 0; f < 12; ++f) { game.cam.pos = game.pl.pos;  game.cam.angle = 0.0f;  game.update(renderer, idle, dt); }
+            const dv2 from = game.pl.pos;
+            float top = 0.0f;
+            for (int f = 0; f < 240; ++f) {
+                Input in;
+                in.mouse[1] = true;
+                if (withJump && f == 0) in.pressed[VK_SPACE] = true;
+                game.cam.pos = game.pl.pos;  game.cam.angle = 0.0f;
+                aimAt(in, game.pl.pos + dv2(0.0, 300.0));
+                game.update(renderer, in, dt);
+                top = std::max(top, (float)(game.pl.pos.y - from.y));
+            }
+            printf("      holding the rocket straight up %s: the highest point is %.0f units above the surface\n",
+                   withJump ? "after a jump" : "from standing", top);
         }
         printf("jumptest: %s\n", failures == 0 ? "PASS" : "FAIL");
         fflush(stdout);

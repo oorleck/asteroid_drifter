@@ -41,8 +41,8 @@ namespace tune {
     static const float AIR_ACCEL   = 0.0f;
     static const float JUMP_SPEED  = 260.0f;
     static const float JUMP_MIN_LIFT = 0.17f;  // a jump leaves the ground at least this far (sine, about 10 degrees) off the surface
-    static const float THRUST      = 750.0f;
-    static const float FUEL_MAX    = 80.0f;    // the tank: 20% smaller than the 100 it was; burn and regen are unchanged, so the duty cycle is too
+    static const float THRUST      = 562.5f;   // 25% weaker than the 750 it was
+    static const float FUEL_MAX    = 40.0f;    // the tank (it was 100, then 80); burn and regen are unchanged, so the duty cycle is too: 1.6 s of burn from full
     static const float FUEL_BURN   = 25.0f;
     static const float FUEL_REGEN  = 22.0f;
     static const float FUEL_RESTART = 12.0f;   // after running dry, fuel needed before the rocket relights

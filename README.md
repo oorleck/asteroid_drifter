@@ -20,9 +20,9 @@ whole thing links against `opengl32`, `gdi32`, `winmm` (sound) and `ws2_32`
 
 ## The game
 
-**Each level** puts a beacon at a random distance (roughly 2400-3400 units on
+**Each level** puts a beacon at a random distance (roughly 1200-1700 units on
 level 1, growing 4% a level) and gives you a time limit worked out from it,
-about 40 seconds. The limit is deliberately roomy: the point is to have time to
+about 50 seconds. The limit is deliberately roomy: the point is to have time to
 *fight*, not just run. Reach the beacon and you are paid **credits** for the
 level and for every second left on the clock, then the depot opens. Run out of
 time or of suit and you lose a life (see below).
@@ -303,7 +303,7 @@ onward). Nothing to install or download.
 | `F11` / `F12` | Fullscreen / save a PNG screenshot |
 | `Esc` | Quit |
 
-The rocket burns fuel from a small tank (80 units, burning 25 a second) that refills while you are not using it. The force field
+The rocket burns fuel from a small tank (40 units, burning 25 a second, so 1.6 s of thrust from full) that refills while you are not using it. The force field
 runs off an energy bar: it switches itself off when that empties and will not
 relight until it has recovered a little.
 
@@ -546,8 +546,8 @@ The rest of the feel lives in two other blocks:
 A few notes on what interacts with what:
 
 * **Time limit.** `rules::SPEED_BASE` is the average speed a player is expected
-  to hold, and the limit is distance divided by it. A pilot bot (`-leveltest`)
-  crosses a level in about 5-17 s at the current thrust, so a ~40 s limit leaves
+  to hold, and the limit is distance divided by it (worked out from the distance before `DIST_SCALE` halves it, then multiplied by `TIME_SCALE`, 1.2). A pilot bot (`-leveltest`)
+  crosses a level in about 5-18 s at the current thrust, so a 40-70 s limit leaves
   most of the clock for fighting. If you make the rocket weaker, raise the limit.
 * **Walking.** `WALK_SPEED` and `AIR_ACCEL` are currently 0, so `A`/`D` do not
   move the spaceman and all travel is by jump and rocket. `-walktest` reports
@@ -557,7 +557,7 @@ A few notes on what interacts with what:
   `-rockettest` checks that thrust never exceeds that budget.
 * Gravity is `G * m * r / (r^2 + soft)^1.5` with softening proportional to the
   rock's radius. Since a rock's mass scales with its area, **surface gravity
-  works out roughly the same on every rock** (about 375 u/s^2: `GRAV_CONST` is 150, it was 100).
+  works out roughly the same on every rock** (about 560 u/s^2: `GRAV_CONST` is 225; it began at 100). Held straight up from standing, the rocket still lifts you about 400 units (`-jumptest` reports it).
 * Bullet **gravity** (`BULLET_GRAV`, `HEAVY_GRAV` in `src/game.h`) is a
   multiplier on the pull of nearby rock. Real-strength gravity bends a 1650 u/s
   round by about 4 units over 330 units of flight, which is invisible, so bullets

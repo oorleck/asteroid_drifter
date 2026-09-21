@@ -13,7 +13,7 @@ namespace cfg {
     static const double CHUNK       = 620.0;    // world units per streaming chunk
     static const int    MAX_BODIES  = 4096;
     static const float  DENSITY     = 1.0f;
-    static const float  GRAV_CONST  = 150.0f;   // all rocks end up near 375 u/s2 at the surface (it was 100, 250)
+    static const float  GRAV_CONST  = 225.0f;   // all rocks end up near 560 u/s2 at the surface (it was 100, then 150)
     static const float  MIN_PIECE   = 140.0f;   // area below this becomes debris
     static const double SIM_RADIUS  = 5200.0;   // full physics only near the player
     static const int    REBUILD_BUDGET = 14;    // split checks per frame (uploads get 3x)

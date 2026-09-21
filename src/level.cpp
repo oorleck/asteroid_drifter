@@ -13,11 +13,13 @@ Difficulty makeDifficulty(int level, Rng& rng) {
     const float k = (float)(level - 1);
 
     d.level = level;
-    d.distance = std::min(rules::DIST_CAP,
-                          rng.range(rules::DIST_MIN, rules::DIST_MAX) * (1.0f + rules::DIST_GROWTH * k));
-    // The time limit is the distance over the speed we expect the player to hold.
+    const float raw = std::min(rules::DIST_CAP,
+                               rng.range(rules::DIST_MIN, rules::DIST_MAX) * (1.0f + rules::DIST_GROWTH * k));
+    d.distance = raw * rules::DIST_SCALE;
+    // The time limit is the distance over the speed we expect the player to hold. It is
+    // worked out from the unscaled distance, so a nearer beacon leaves a lot more slack.
     const float need = rules::SPEED_BASE + rules::SPEED_GROWTH * k;
-    d.timeLimit = clampf(d.distance / need, rules::TIME_MIN, rules::TIME_MAX);
+    d.timeLimit = clampf(raw / need, rules::TIME_MIN, rules::TIME_MAX) * rules::TIME_SCALE;
 
     d.turrets = std::min(3 + 2 * level, 36);
     d.drones  = std::min(1 + (int)(1.3f * k), 22);

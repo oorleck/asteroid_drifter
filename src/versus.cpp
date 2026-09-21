@@ -280,22 +280,22 @@ void Game::botThink(Peer& b, float dt) {
     if (dist > 250.0f && dist < 1100.0f && me.heavyCd <= 0.0f && vsRng.f() < dt * 0.5f && clearLine(me.pos, target->pos))
         ++c.heavySeq;
 
-    // Getting about. Walking is off, so the only way off a rock is to jump toward
-    // the cursor (or along the surface, if that points into it), and the only way to steer is the rocket, which pushes toward
-    // the aim. So: when distant away, jump the moment the way up is at all toward the
-    // target (or, failing that, after a wait), then fly at them; when close, stay put
-    // and shoot, hopping now and then to be harder to hit.
+    // Getting about. Walking is off, so the only way off a rock is to jump, and a jump
+    // goes toward the cursor (the bot's aim is at its target), and the only way to steer
+    // is the rocket, which pushes toward the aim. So: when far away, or with a rock in the
+    // way, jump the moment the jump is ready, then fly at them; when close with a clear
+    // line, stay put and shoot, hopping now and then to be harder to hit.
     b.botJumpCd -= dt;
     const v2 toT = dist > 1.0f ? rel / dist : v2(1, 0);
+    const bool blocked = !clearLine(me.pos, target->pos);
     if (me.grounded && b.botJumpCd <= 0.0f) {
-        const bool distant = dist > 550.0f;
-        const float facing = dot(me.up, toT);
-        if (distant ? (facing > -0.15f || b.botJumpCd < -2.5f) : vsRng.f() < dt * 0.6f) {
+        const bool distant = dist > 550.0f || blocked;
+        if (distant || vsRng.f() < dt * 0.6f) {
             ++c.jumpSeq;
             b.botJumpCd = distant ? 0.8f : vsRng.range(1.5f, 3.5f);
         }
     }
-    if (!me.grounded && dist > 500.0f && me.fuel > 6.0f) {
+    if (!me.grounded && (dist > 350.0f || blocked) && me.fuel > 4.0f) {
         const float closing = dot(me.vel - target->vel, toT);         // how fast we are already closing
         if (closing < 320.0f) c.thrust = true;
     }
