@@ -126,7 +126,10 @@ void Game::updateBullets(float dt) {
     for (size_t i = 0; i < bullets.size(); ++i) {
         Bullet b = bullets[i];
         b.life -= dt;
-        if (b.life <= 0) continue;
+        if (b.life <= 0) {
+            if (b.homing || b.gen >= 0) detonateBullet(b);     // the homing weapons only reach so far: they go off when their time is up
+            continue;
+        }
         b.vel += world.gravityAt(b.pos, 1500.0) * (dt * b.gravScale);
         if (b.homing) steerHoming(b, dt);
 
@@ -200,7 +203,7 @@ void Game::fire(Player& p, bool heavy) {
     b.caliber = heavy ? tune::HEAVY_CAL : tune::BULLET_CAL;
     b.gravScale = heavy ? tune::HEAVY_GRAV : tune::BULLET_GRAV;
     b.budget  = heavy ? tune::HEAVY_PEN : tune::BULLET_PEN;
-    b.life    = heavy ? 4.5f : 2.6f;
+    b.life    = heavy ? rules::HOMING_LIFE : 2.6f;
     b.heavy   = heavy;
     b.homing  = heavy;              // the charge shot is the homing shell
     b.owner   = p.id;

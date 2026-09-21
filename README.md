@@ -102,16 +102,16 @@ freezes and the depot opens. Click a row, or press its number:
 
 | Item | Key | Price | What it does |
 | --- | --- | --- | --- |
-| **Homing shell** | `F` / middle mouse | 300 | The charge shot. A heavy shell that curves onto the nearest enemy in front of it, but in a wide arc (a turning radius of about 400 units), so you have to aim it. |
-| **Missile salvo** | `G` | 450 (6 salvos), then 150 for 6 more | Five small missiles at once, each sent after a *different* target. With fewer than five targets they double up; incoming enemy missiles count as targets. |
+| **Homing shell** | `F` / middle mouse | 300 | The charge shot. A heavy shell that curves onto the nearest enemy in front of it, but in a wide arc (a turning radius of about 400 units), so you have to aim it. It **goes off after 1.75 s** (about 1300 units), so a fight cannot be taken from further away than that, and gravity bends it 60% less than the rifle. |
+| **Missile salvo** | `G` | 450 (6 salvos), then 150 for 6 more | Five small missiles at once, each sent after a *different* target. With fewer than five targets they double up; incoming enemy missiles count as targets. The missiles are small and **blow up after 2.3 s** wherever they are (about 1300 units), and will not lock onto anything further off than 1200. |
 | **Nuke** | `N` | 400 for 3 | A slow grenade, dragged hard by gravity, with a 3.6 s fuse shown on the bomb itself. A huge blast: it vaporises rock, kills everything in its radius and hurts you if you are close. |
 | **Force field** | `X` | 500 | A bubble that shoves bullets, missiles, drones and rocks away. Costs energy while it is on. |
 | **Blast shield** | hold Left Alt | 350, then 120 to refill | A 30 degree plate held toward the cursor. It stops bullets and missiles that reach it and soaks up blasts that go off inside its arc, spending charge equal to the damage it stops. When it is empty it stays down until you refill it. |
 | **Fractal shell** | `Z` | 1400 (3 shells), then 500 for 3 more | The most expensive thing in the depot, and the most powerful against groups. A homing shell that **splits in two** every so often, up to **five times**, so one shot can become **32 pieces**, and every piece homes on its own target. Each generation is **0.45** of the one before (half, less a tenth), so its power is spread across a swarm rather than spent in one place. |
 
-Purchases last for the run. Nukes can only be bought, never found.
+Purchases last for the run. Nukes can only be bought, never found. `R` is the restart key, so the nuke stays on `N`.
 
-**The fractal shell** is worth understanding, because how you aim it changes what it does. It leaves blood red and turns towards yellow with every split, and the pieces are small and sharp. *How far the cursor is from the spaceman decides how far the shell flies between splits*: the split is on a timer, set to the time the shell takes to fly as far as the cross is from you. With no gravity that means it splits exactly at the cross (and again at the same spacing after that), and gravity from rock bends it off that mark, since the timer does not care. Never less than 90 units of flight. Put the cross on a cluster and the first split happens over the cluster; point at something close and it divides almost at once into a cloud; point far away and it flies a long way as a single heavy shell, then divides late. Later splits come at the same time interval. Whenever it splits, the two pieces leave the parent's line by about 13 degrees, each **14% faster** than the parent was (so the last pieces move nearly twice as fast as the shell did), and are each given a *different* target, the one on the left to the left-hand piece, so a volley spreads over a group rather than piling onto the nearest enemy.
+**The fractal shell** is worth understanding, because how you aim it changes what it does. It leaves blood red and turns towards yellow with every split, and the pieces are small and sharp. *How far the cursor is from the spaceman decides how far the shell flies between splits*: the split is on a timer, set to the time the shell takes to fly as far as the cross is from you. With no gravity that means it splits exactly at the cross (and again at the same spacing after that), and gravity from rock bends it off that mark, since the timer does not care. Never less than 90 units of flight, and never more than 1300. **Every piece blows up 2.8 s after the shot was fired**, split or not, so a cursor far away gives a shell that goes off before it has split much, and nothing reaches further than about 1800 units. Gravity bends it 60% less than it used to. Put the cross on a cluster and the first split happens over the cluster; point at something close and it divides almost at once into a cloud; point far away and it flies a long way as a single heavy shell, then divides late. Later splits come at the same time interval. Whenever it splits, the two pieces leave the parent's line by about 13 degrees, each **14% faster** than the parent was (so the last pieces move nearly twice as fast as the shell did), and are each given a *different* target, the one on the left to the left-hand piece, so a volley spreads over a group rather than piling onto the nearest enemy.
 
 | Generation | Pieces | Strength | Blast damage | Blast radius |
 | --- | --- | --- | --- | --- |
@@ -303,7 +303,7 @@ onward). Nothing to install or download.
 | `F11` / `F12` | Fullscreen / save a PNG screenshot |
 | `Esc` | Quit |
 
-The rocket burns fuel from a small tank (40 units, burning 25 a second, so 1.6 s of thrust from full) that refills while you are not using it. The force field
+The rocket burns fuel from a small tank (40 units, burning 25 a second, so 1.6 s of thrust from full) that refills at 18.7 a second while you are not using it. The force field
 runs off an energy bar: it switches itself off when that empties and will not
 relight until it has recovered a little.
 
@@ -362,6 +362,7 @@ $line
     -rockettest      the rocket obeys its fuel budget
     -walktest        A and D move the right way on screen
     -jumptest        the jump leaves toward the cursor, never into the ground; tank and gravity values
+    -rangetest       the homing weapons blow up when their time is up; refill rate and shot gravity
     -bullettest      how far gravity bends each shot
     -showcase        stage each feature and save screenshots (use -shotfile)
 
@@ -557,7 +558,7 @@ A few notes on what interacts with what:
   `-rockettest` checks that thrust never exceeds that budget.
 * Gravity is `G * m * r / (r^2 + soft)^1.5` with softening proportional to the
   rock's radius. Since a rock's mass scales with its area, **surface gravity
-  works out roughly the same on every rock** (about 560 u/s^2: `GRAV_CONST` is 225; it began at 100). Held straight up from standing, the rocket still lifts you about 400 units (`-jumptest` reports it).
+  works out roughly the same on every rock** (about 650 u/s^2: `GRAV_CONST` is 258.75; it began at 100). Held straight up from standing, the rocket still lifts you about 400 units (`-jumptest` reports it).
 * Bullet **gravity** (`BULLET_GRAV`, `HEAVY_GRAV` in `src/game.h`) is a
   multiplier on the pull of nearby rock. Real-strength gravity bends a 1650 u/s
   round by about 4 units over 330 units of flight, which is invisible, so bullets

@@ -34,7 +34,7 @@ struct Input {
 // about 4 units over 330 units of flight, which nobody can see.
 namespace tune {
     static const float BULLET_GRAV = 9.0f;
-    static const float HEAVY_GRAV  = 10.0f;
+    static const float HEAVY_GRAV  = 4.0f;     // the F shell: 60% less pull than the 10 it had
     static const float PLAYER_R    = 6.5f;
     static const float WALK_SPEED  = 0.0f;
     static const float WALK_ACCEL  = 1500.0f;
@@ -44,7 +44,7 @@ namespace tune {
     static const float THRUST      = 562.5f;   // 25% weaker than the 750 it was
     static const float FUEL_MAX    = 40.0f;    // the tank (it was 100, then 80); burn and regen are unchanged, so the duty cycle is too: 1.6 s of burn from full
     static const float FUEL_BURN   = 25.0f;
-    static const float FUEL_REGEN  = 22.0f;
+    static const float FUEL_REGEN  = 18.7f;    // 15% slower than the 22 it was
     static const float FUEL_RESTART = 12.0f;   // after running dry, fuel needed before the rocket relights
     static const float BULLET_V    = 1650.0f;
     static const float BULLET_CAL  = 5.2f;
@@ -413,6 +413,7 @@ struct Game {
     static float fractalSplitTime(float aimDist, float speed);   // ...and the time that takes at a given launch speed: what it actually splits by
     void fireFractal(float aimDist);
     void splitFractal(const Bullet& parent);
+    void detonateBullet(const Bullet& b);              // a shell or fractal piece that has flown its time goes off where it is (the range limit)
     void shellBurst(const Bullet& b);                   // a heavy shell going off where it landed
     void updatePMissiles(float dt);
     void updateField(float dt);

@@ -55,7 +55,7 @@ Bullet Game::makeBullet(const Player& p, dv2 pos, v2 vel, bool heavy) const {
     b.caliber = heavy ? tune::HEAVY_CAL : tune::BULLET_CAL;
     b.gravScale = heavy ? tune::HEAVY_GRAV : tune::BULLET_GRAV;
     b.budget = heavy ? tune::HEAVY_PEN : tune::BULLET_PEN;
-    b.life = heavy ? 4.5f : 2.6f;
+    b.life = heavy ? rules::HOMING_LIFE : 2.6f;
     b.heavy = heavy;
     b.owner = p.id;
     b.col = mix(heavy ? Col(1.00f, 0.45f, 0.75f) : Col(1.00f, 0.86f, 0.45f), p.tint, 0.55f);

@@ -102,7 +102,12 @@ void Game::updatePMissiles(float dt) {
         if (m.dead) continue;
         m.age += dt;
         m.life -= dt;
-        if (m.life <= 0.0f) { m.dead = true; boom(m.pos, 10.0f, pal::SALVO); continue; }
+        if (m.life <= 0.0f) {                        // out of time: it goes off where it is, so it cannot reach further than this
+            m.dead = true;
+            boom(m.pos, 9.0f, pal::SALVO);
+            explode(m.pos, rules::SALVO_BLAST, rules::SALVO_DAMAGE, 0.0f, rules::SALVO_CRATER, 3.0e4f, false);
+            continue;
+        }
 
         // Find what it is chasing; if that is gone, take the nearest thing in reach.
         dv2 target;
@@ -158,7 +163,7 @@ void Game::updatePMissiles(float dt) {
         }
         if (blew) {
             m.dead = true;
-            boom(m.pos, 13.0f, pal::SALVO);
+            boom(m.pos, 9.0f, pal::SALVO);
             explode(m.pos, rules::SALVO_BLAST, rules::SALVO_DAMAGE, 0.0f, rules::SALVO_CRATER, 3.0e4f, false);
             continue;
         }
@@ -247,9 +252,10 @@ void Game::drawPMissiles(Renderer& r) {
         const v2 p = camRel(m.pos);
         if (!inView(p, 40.0f)) continue;
         const v2 d = norm(m.vel), n = perp(d);
-        const v2 body[4] = { p + d * 7.0f, p + n * 2.4f - d * 3.5f, p - d * 5.0f, p - n * 2.4f - d * 3.5f };
-        r.poly(body, 4, true, pal::SALVO, 2.8f);
-        r.line(p - d * 5.0f, p - d * (11.0f + rng.f() * 8.0f), Col(0.8f, 1.0f, 0.95f), 2.6f);
+        const float sz = 0.55f;                                    // a small missile: 45% smaller than it was
+        const v2 body[4] = { p + d * (7.0f * sz), p + n * (2.4f * sz) - d * (3.5f * sz), p - d * (5.0f * sz), p - n * (2.4f * sz) - d * (3.5f * sz) };
+        r.poly(body, 4, true, pal::SALVO, 2.0f);
+        r.line(p - d * (5.0f * sz), p - d * ((11.0f + rng.f() * 8.0f) * sz), Col(0.8f, 1.0f, 0.95f), 1.8f);
     }
 }
 
@@ -363,12 +369,6 @@ float Game::fractalSplitTime(float aimDist, float speed) {
     return fractalSplitDistance(aimDist) / std::max(1.0f, speed);
 }
 
-// How long a piece needs to live to get through all the splits still ahead of it.
-static float fractalLife(int gen, float splitTime) {
-    const int left = rules::FRACTAL_SPLITS - gen + 1;
-    return clampf(left * splitTime + 2.0f, 3.0f, 24.0f);
-}
-
 void Game::fireFractal(float aimDist) {
     if (!pl.hasFractal || pl.fractalAmmo <= 0 || pl.fractalCd > 0.0f || state != State::Playing) return;
     --pl.fractalAmmo;
@@ -379,7 +379,7 @@ void Game::fireFractal(float aimDist) {
     b.pos = dv2(pl.pos.x + dir.x * 16.0, pl.pos.y + dir.y * 16.0);
     b.vel = dir * rules::FRACTAL_SPEED + pl.vel;
     b.caliber = rules::FRACTAL_CAL;
-    b.gravScale = 6.0f;
+    b.gravScale = 2.4f;                                    // 60% less pull than the 6 it had
     b.budget = tune::HEAVY_PEN;
     b.heavy = true;
     b.homing = true;
@@ -387,7 +387,7 @@ void Game::fireFractal(float aimDist) {
     b.gen = 0;
     b.power = 1.0f;
     b.splitEvery = fractalSplitTime(aimDist, len(b.vel));
-    b.life = fractalLife(0, b.splitEvery);
+    b.life = rules::FRACTAL_LIFE;                          // and it, and every piece of it, blows up when that runs out
     b.col = fractalColour(0);
     bullets.push_back(b);
 
@@ -434,7 +434,6 @@ void Game::splitFractal(const Bullet& parent) {
         c.vel = rot(dir, turn) * (speed * rules::FRACTAL_SPEEDUP);
         c.caliber = std::max(rules::FRACTAL_MIN_CAL, parent.caliber * rootP);
         c.budget = parent.budget * rootP;
-        c.life = std::max(parent.life, fractalLife(c.gen, c.splitEvery));
         c.targetId = s == 0 ? left : right;
         c.col = fractalColour(c.gen);
         if ((int)bullets.size() < 900) bullets.push_back(c);
@@ -448,6 +447,25 @@ void Game::splitFractal(const Bullet& parent) {
 
 // A heavy shell going off where it landed. Ordinary ones use the fixed numbers; a fractal
 // piece scales them by its strength, and its blast radius by the square root of it.
+// The range limit of the homing weapons: out of time, a shell or fractal piece goes off
+// where it is, just as if it had hit something. (A network client only shows it; the
+// host decides what the blast does.)
+void Game::detonateBullet(const Bullet& b) {
+    if (netClient) {
+        boom(b.pos, b.gen >= 0 ? 12.0f + 18.0f * std::sqrt(b.power) : 22.0f, b.col);
+        return;
+    }
+    if (b.gen >= 0) {
+        shake = std::max(shake, 0.15f + 0.25f * std::sqrt(b.power));
+        shellBurst(b);
+    } else {
+        shake = std::max(shake, 0.3f);
+        boom(b.pos, 22.0f, b.col);
+        explodeOwner = b.owner;
+        explode(b.pos, rules::HEAVY_SPLASH_R, rules::HEAVY_SPLASH, versus ? rules::VS_HEAVY_SPLASH : 0.0f, 0, 0, false);
+    }
+}
+
 void Game::shellBurst(const Bullet& b) {
     if (b.gen >= 0) {
         const float s = std::sqrt(b.power);

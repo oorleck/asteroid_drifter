@@ -47,6 +47,7 @@ namespace rules {
     static const float HEAVY_SPLASH   = 45.0f;
     static const float HOMING_TURN    = 1.75f;    // rad/s a homing shell can turn: a turning radius of about 400 units (speed / rate), so it must be aimed
     static const float HOMING_RANGE   = 1300.0f;  // how far away it can pick a target
+    static const float HOMING_LIFE    = 1.75f;    // the F shell blows up after this long (about 1300 units at its speed), so a fight cannot be taken further than that
 
     // ---- enemies -----------------------------------------------------------
     static const float TURRET_HP      = 45.0f;
@@ -106,8 +107,8 @@ namespace rules {
     static const float SALVO_BLAST    = 46.0f;
     static const float SALVO_CRATER   = 8.0f;
     static const float SALVO_COOLDOWN = 0.9f;
-    static const float SALVO_RANGE    = 1500.0f;
-    static const float SALVO_LIFE     = 4.6f;
+    static const float SALVO_RANGE    = 1200.0f;  // it will not lock onto anything further than it can fly
+    static const float SALVO_LIFE     = 2.3f;     // it blows up after this long, so about 1300 units is as far as it goes
 
     // ---- the force field ---------------------------------------------------------
     static const float FIELD_RADIUS   = 250.0f;
@@ -147,7 +148,8 @@ namespace rules {
     static const float FRACTAL_MIN_CAL    = 2.6f;
     static const float FRACTAL_SPLIT_K    = 1.00f;    // the split timer covers this share of the cursor distance at launch speed: 1.0 puts the first split on the cross (with no gravity)...
     static const float FRACTAL_SPLIT_MIN  = 90.0f;    // ...but never more often than this
-    static const float FRACTAL_SPLIT_MAX  = 2500.0f;  // ...or more rarely (further than the cursor can be from you)
+    static const float FRACTAL_SPLIT_MAX  = 1300.0f;  // ...or more rarely (as far as it can fly at all)
+    static const float FRACTAL_LIFE       = 2.8f;     // every piece blows up this long after the shot was fired, splitting or not: the range limit
     static const float FRACTAL_COOLDOWN   = 2.4f;
     static const int   FRACTAL_LOAD       = 3;        // shells per purchase
     static const int   FRACTAL_MAX        = 12;
@@ -166,7 +168,7 @@ namespace rules {
 
     // ---- versus mode -----------------------------------------------------------
     static const float ARENA_RADIUS     = 2000.0f;  // beyond this a wall pushes you back
-    static const float ARENA_PUSH       = 1500.0f;  // inward acceleration, per 500 units outside
+    static const float ARENA_PUSH       = 2000.0f;  // inward acceleration, per 500 units outside (1500 before gravity was raised; the wall has to beat the pull of the rocks outside)
     static const int   FRAG_LIMIT       = 10;       // first to this many wins
     static const float RESPAWN_TIME     = 3.0f;
     static const float SPAWN_PROTECT    = 2.0f;
