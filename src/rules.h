@@ -133,10 +133,13 @@ namespace rules {
     // so one shot can become 32 pieces. It is the most expensive thing in the depot.
     static const float FRACTAL_SPEED      = 560.0f;   // slower than the rifle so you can watch it divide
     static const float FRACTAL_DAMAGE     = 240.0f;   // what the parent would do on a direct hit; most of it is spent before it lands, splitting
-    static const float FRACTAL_SPLASH_R   = 85.0f;    // and its blast radius
+    static const float FRACTAL_SPLASH_R   = 85.0f;    // and its blast radius; a piece scales it by the square root of its strength, so the area follows the damage
+    static const float FRACTAL_CRATER     = 48.0f;    // the crater a full-strength blast bites out of rock, scaled the same way
+    static const float FRACTAL_KICK       = 6.0e4f;   // and the shove it gives loose rock, scaled by strength
     static const float FRACTAL_CHILD      = 0.45f;    // a child's strength as a share of its parent's: 50% minus 10%
     static const int   FRACTAL_SPLITS     = 5;        // generations after the first
-    static const float FRACTAL_SPREAD     = 0.30f;    // radians each child leaves the parent's line by
+    static const float FRACTAL_SPREAD     = 0.225f;   // radians each child leaves the parent's line by (about 13 degrees; it was 0.30)
+    static const float FRACTAL_SPEEDUP    = 1.08f;    // each split, a piece gains this much speed: five splits, about 1.47 times the launch speed
     static const float FRACTAL_TURN       = 1.95f;    // rad/s a piece can turn toward its target: a radius of about 290 units
     static const float FRACTAL_CAL        = 11.7f;    // the parent's hole in a rock
     static const float FRACTAL_MIN_CAL    = 2.6f;

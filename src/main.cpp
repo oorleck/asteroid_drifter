@@ -2648,7 +2648,7 @@ int main(int argc, char** argv) {
             game.bullets.clear();
             game.enemies.clear();
             const dv2 muzzle(C.x + 16.0, C.y);
-            fireAt(300.0f, 0.0f);                                   // splits every 300 units, about 0.54 s
+            fireAt(200.0f, 0.0f);                                   // splits every 200 units of cursor distance, about 0.36 s: the whole cascade fits in the cleared zone
             check(game.bullets.size() == 1 && game.bullets[0].gen == 0, "firing makes one shell");
             check(game.bullets[0].homing, "and it is a homing device");
 
@@ -2681,7 +2681,7 @@ int main(int argc, char** argv) {
             check(allHoming, "every piece is a homing device");
             check(powerLaw, "each generation is exactly 0.45 of the one before (half, less a tenth)");
             check(std::fabs(rules::FRACTAL_CHILD - 0.5f * 0.9f) < 1e-6f, "and 0.45 is 50% minus 10%");
-            check(std::fabs(firstSplitDist - 300.0) < 40.0, "the first split comes after the interval the cursor distance asked for");
+            check(std::fabs(firstSplitDist - 200.0) < 40.0, "the first split comes after the interval the cursor distance asked for");
         }
         {   // the same shot with the cursor twice as far away splits later
             double dNear = 0, dFar = 0;
@@ -2786,6 +2786,62 @@ int main(int argc, char** argv) {
             }
             printf("      a rock of %u solid samples has %u left within reach after one shell\n", before, after);
             check(before > 0 && after < before, "a fractal shell carves rock like any other");
+        }
+
+        // ---- the blast and the crater follow the damage each piece does
+        {
+            float removed[3] = { 0, 0, 0 };
+            float radii[3]   = { 0, 0, 0 };
+            const int gens[3] = { 0, 2, 4 };
+            for (int k = 0; k < 3; ++k) {
+                game.bullets.clear();  game.enemies.clear();
+                const dv2 R(C.x + 500.0, C.y);
+                const int slot = game.world.spawn(R, 140.0f, 777u);
+                game.world.step(dt, C);
+                auto solid = [&]() { return slot >= 0 && game.world.bodies[slot].alive ? game.world.summarise(slot).solid : 0u; };
+                const uint32_t before = solid();
+                Bullet b;
+                b.gen = gens[k];
+                b.power = std::pow(rules::FRACTAL_CHILD, (float)gens[k]);
+                b.heavy = true;
+                b.pos = dv2(R.x - 140.0, R.y);                      // on the rock's rim
+                b.col = Col(1, 0.5f, 0.1f);
+                game.shellBurst(b);
+                const uint32_t after = solid();
+                removed[k] = (float)before - (float)after;
+                radii[k] = rules::FRACTAL_SPLASH_R * std::sqrt(b.power);
+                game.world.destroy(slot);
+            }
+            printf("      rock removed by a generation 0, 2, 4 burst: %.0f, %.0f, %.0f samples (blast radii %.0f, %.0f, %.0f)\n",
+                   removed[0], removed[1], removed[2], radii[0], radii[1], radii[2]);
+            check(removed[0] > removed[1] * 1.5f && removed[1] > removed[2] * 1.2f && removed[2] >= 0.0f,
+                  "the weaker the piece, the smaller the crater it makes");
+            check(removed[0] > 0.0f, "a full-strength burst bites a real crater out of the rock");
+            check(std::fabs(radii[1] / radii[0] - rules::FRACTAL_CHILD) < 1e-3f,
+                  "and the blast area follows the damage: a generation two piece has 0.45 squared of the area");
+        }
+
+        // ---- a split is narrower than it was, and each piece is quicker than its parent
+        {
+            game.bullets.clear();  game.enemies.clear();
+            fireAt(300.0f, 0.0f);
+            float parentSpeed = 0.0f;
+            for (int i = 0; i < 60 * 2; ++i) {
+                for (const Bullet& bl : game.bullets) if (bl.gen == 0) parentSpeed = len(bl.vel);
+                runFrames(1);
+                int n = 0;
+                for (const Bullet& bl : game.bullets) if (bl.gen == 1) ++n;
+                if (n == 2) break;
+            }
+            v2 va(0, 0), vb(0, 0);  int n = 0;
+            for (const Bullet& bl : game.bullets) if (bl.gen == 1) { (n++ == 0 ? va : vb) = bl.vel; }
+            const float ang = n == 2 ? std::fabs(wrapAngle(std::atan2(va.y, va.x) - std::atan2(vb.y, vb.x))) : 0.0f;
+            const float sp  = n == 2 ? 0.5f * (len(va) + len(vb)) : 0.0f;
+            printf("      the two pieces leave %.1f degrees apart (%.1f from the parent's line), at %.0f against the parent's %.0f\n",
+                   ang * 57.2958f, ang * 0.5f * 57.2958f, sp, parentSpeed);
+            check(n == 2 && std::fabs(ang - 2.0f * rules::FRACTAL_SPREAD) < 0.06f, "the two pieces leave the parent's line by the (narrower) spread angle");
+            check(std::fabs(rules::FRACTAL_SPREAD - 0.30f * 0.75f) < 1e-6f, "which is 25% smaller than the 0.30 radians it was");
+            check(n == 2 && parentSpeed > 0.0f && sp > parentSpeed * 1.05f && sp < parentSpeed * 1.11f, "and each piece is a bit faster than the parent was (about 8%)");
         }
 
         // ---- ammunition, cooldown, ownership

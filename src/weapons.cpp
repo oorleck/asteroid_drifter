@@ -431,7 +431,7 @@ void Game::splitFractal(const Bullet& parent) {
         c.gen = parent.gen + 1;
         c.power = parent.power * rules::FRACTAL_CHILD;
         c.flown = 0.0f;
-        c.vel = rot(dir, turn) * speed;
+        c.vel = rot(dir, turn) * (speed * rules::FRACTAL_SPEEDUP);
         c.caliber = std::max(rules::FRACTAL_MIN_CAL, parent.caliber * rootP);
         c.budget = parent.budget * rootP;
         c.life = std::max(parent.life, fractalLife(c.gen, c.splitEvery));
@@ -452,7 +452,8 @@ void Game::shellBurst(const Bullet& b) {
     if (b.gen >= 0) {
         const float s = std::sqrt(b.power);
         boom(b.pos, 12.0f + 18.0f * s, b.col);
-        explode(b.pos, rules::FRACTAL_SPLASH_R * s, rules::FRACTAL_DAMAGE * b.power, 0, 0, 0, false);
+        explode(b.pos, rules::FRACTAL_SPLASH_R * s, rules::FRACTAL_DAMAGE * b.power, 0,
+                rules::FRACTAL_CRATER * s, rules::FRACTAL_KICK * b.power, false);
     } else {
         explode(b.pos, rules::HEAVY_SPLASH_R, rules::HEAVY_DAMAGE, 0, 0, 0, false);
     }
