@@ -17,7 +17,7 @@ namespace rules {
     static const float DIST_MIN       = 2400.0f;
     static const float DIST_MAX       = 3400.0f;
     static const float DIST_GROWTH    = 0.04f;    // +4% distance per level
-    static const float DIST_SCALE     = 0.5f;     // the beacon is this share as far as those distances say (the clock is worked out from the unscaled ones)
+    static const float DIST_SCALE     = 0.75f;    // the beacon is this share as far as those distances say (it was 0.5; the clock is worked out from the unscaled ones)
     static const float TIME_SCALE     = 1.2f;     // and the clock gets 20% more on top
     static const float DIST_CAP       = 9500.0f;
     static const float SPEED_BASE     = 72.0f;    // u/s the player must average on level 1
@@ -69,21 +69,25 @@ namespace rules {
     static const int   CREDIT_WEAPON  = 30;       // each of a warship's guns
 
     // ---- warships -----------------------------------------------------------
-    // Big generated ships berthed on the way to the beacon: every other level or so.
+    // Big generated ships berthed on the way to the beacon: every third level, each bigger and tougher than the last.
     // Their weapons are Enemies (so every weapon of yours works on them); the hull
     // is armour that soaks up most of a rifle's damage, but blasts go straight in.
-    static const int   SHIP_FIRST_LEVEL = 2;      // the first one is on level 2, then about every other level
-    static const float SHIP_EVEN_CHANCE = 0.85f;  // an even level (after the first) has one this often...
-    static const float SHIP_ODD_CHANCE  = 0.20f;  // ...an odd one (from level 7) this often
+    static const int   SHIP_FIRST_LEVEL = 3;      // the first one is on level 3, then every third level (6, 9, 12...)
+    static const int   SHIP_EVERY       = 3;      // ...so the tier of a ship is its level / 3: 1, 2, 3...
     static const float SHIP_TIME_BONUS  = 8.0f;   // extra seconds on the clock for the detour
-    static const float SHIP_LENGTH_MIN  = 460.0f;
-    static const float SHIP_LENGTH_MAX  = 780.0f;
+    static const float SHIP_BASE_LENGTH = 204.0f; // the first one: six times the width of a turret (34 units)
+    static const float SHIP_LENGTH_JITTER = 0.12f; // +/- this, so two of the same tier are not the same size
+    static const float SHIP_LENGTH_GROWTH = 1.40f; // each tier is this much longer than the last...
+    static const float SHIP_LENGTH_CAP  = 1500.0f; // ...up to this
     static const float SHIP_HULL_BASE   = 420.0f; // hull points on level 0...
-    static const float SHIP_HULL_PER_LEVEL = 70.0f; // ...plus this per level
-    static const float SHIP_RIFLE_FACTOR = 0.45f; // share of a rifle bullet's damage that gets through the armour
-    static const float SHIP_NUKE_SHARE  = 0.6f;   // a nuke at the heart takes this share of a full hull
-    static const float SHIP_WEAPON_HP   = 70.0f;  // each gun, before the level scaling
-    static const float SHIP_WEAPON_RADIUS = 20.0f;
+    static const float SHIP_HULL_PER_LEVEL = 70.0f; // ...plus this per level...
+    static const float SHIP_HULL_GROWTH = 1.50f;  // ...times this for every tier after the first
+    static const float SHIP_RIFLE_FACTOR = 0.45f; // share of a rifle bullet's damage that gets through the armour (tier 1)
+    static const float SHIP_ARMOUR_GROWTH = 0.15f; // each tier after the first: the armour is this much thicker, and a nuke takes a smaller share
+    static const float SHIP_NUKE_SHARE  = 0.6f;   // a nuke at the heart takes this share of a full hull (tier 1)
+    static const float SHIP_WEAPON_HP   = 70.0f;  // each gun, before the level scaling...
+    static const float SHIP_WEAPON_GROWTH = 1.25f; // ...times this for every tier after the first
+    static const float SHIP_WEAPON_RADIUS = 20.0f; // the biggest a mount gets; the small ships have smaller ones (see ships.cpp)
     static const float SHIP_WEAPONS_SHARE = 0.6f; // destroying every gun takes this share of the hull with it
     static const float SHIP_DRIFT       = 90.0f;  // how far it wanders around its berth
     static const float SHIP_TURN        = 0.16f;  // rad/s it can swing to face you
@@ -167,8 +171,8 @@ namespace rules {
     static const int   FRACTAL_MAX        = 12;
     // ---- the nuke ----------------------------------------------------------
     static const float NUKE_FUSE      = 3.6f;     // seconds from throw to blast
-    static const float NUKE_SPEED     = 170.0f;   // slow, so gravity drags it hard
-    static const float NUKE_GRAV      = 1.7f;
+    static const float NUKE_SPEED     = 340.0f;   // twice what it was (170)...
+    static const float NUKE_GRAV      = 2.5f;     // ...and gravity pulls it harder than ever (it was 1.7): it arcs down into the rocks
     static const float NUKE_RADIUS    = 340.0f;   // crater radius
     static const float NUKE_REACH     = 1.15f;    // player damage reaches this * radius
     static const float NUKE_PLAYER_DMG = 125.0f;  // at the very centre

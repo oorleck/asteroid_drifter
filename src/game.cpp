@@ -307,7 +307,7 @@ void Game::stepPlayer(Player& p, const PlayerCmd& c, float dt) {
     p.protect    = std::max(0.0f, p.protect - dt);
 
     const float mv = c.move;
-    p.vel += g * dt;
+    p.vel += g * (dt * tune::PLAYER_GRAV);
 
     // ---- integrate, substepped so we never tunnel through thin rock
     const float speed = len(p.vel);

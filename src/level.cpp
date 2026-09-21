@@ -41,15 +41,10 @@ Difficulty makeDifficulty(int level, Rng& rng) {
     return d;
 }
 
-// Which levels have a warship: the first one is on level 2, then mostly the even
-// levels, and now and then an odd one later on. A pure function of the run and the
-// level number, so a retry brings back exactly the same fight.
-static bool wantsShip(uint64_t seed, int number) {
-    if (number < rules::SHIP_FIRST_LEVEL) return false;
-    if (number == rules::SHIP_FIRST_LEVEL) return true;
-    Rng r(hashCombine(seed, (uint64_t)number * 5779ull));
-    const float p = (number % 2 == 0) ? rules::SHIP_EVEN_CHANCE : (number >= 7 ? rules::SHIP_ODD_CHANCE : 0.0f);
-    return r.f() < p;
+// Which levels have a warship: every third one, from level 3 (3, 6, 9...). A pure
+// function of the level number, so a retry brings back exactly the same fight.
+static bool wantsShip(uint64_t, int number) {
+    return number >= rules::SHIP_FIRST_LEVEL && number % rules::SHIP_EVERY == 0;
 }
 
 // -------------------------------------------------------------- run flow --

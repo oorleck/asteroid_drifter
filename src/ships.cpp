@@ -62,10 +62,18 @@ void generateShip(Ship& s, uint64_t seed, int level, const Difficulty& D) {
     Rng r(seed);
     s = Ship();
 
-    const float L = r.range(rules::SHIP_LENGTH_MIN, rules::SHIP_LENGTH_MAX) * (1.0f + std::min(0.25f, 0.02f * level));
-    const float W = L * r.range(0.14f, 0.30f);
+    // Every third level brings a ship, each bigger and tougher than the last: its tier is 1, 2, 3...
+    // The first is about six turrets long and broad in proportion; each tier is 1.4 times the length.
+    const int tier = std::max(1, level / rules::SHIP_EVERY);
+    const float L = std::min(rules::SHIP_LENGTH_CAP, rules::SHIP_BASE_LENGTH * std::pow(rules::SHIP_LENGTH_GROWTH, (float)(tier - 1)))
+                  * r.range(1.0f - rules::SHIP_LENGTH_JITTER, 1.0f + rules::SHIP_LENGTH_JITTER);
+    const float W = L * (r.range(0.14f, 0.30f) + 0.12f / (float)tier);   // the small ones are stubbier, so they are big in every direction
     const int style = r.i(0, 3);          // 0 dart, 1 cruiser, 2 carrier, 3 wedge
     s.style = style;
+    s.tier = tier;
+    s.mountR = clampf(L * 0.055f, 11.0f, rules::SHIP_WEAPON_RADIUS);
+    s.riflePass = rules::SHIP_RIFLE_FACTOR / (1.0f + rules::SHIP_ARMOUR_GROWTH * (float)(tier - 1));
+    s.nukeShare = rules::SHIP_NUKE_SHARE / (1.0f + 2.0f * rules::SHIP_ARMOUR_GROWTH * (float)(tier - 1));
     s.col = hsv(r.f(), r.range(0.55f, 0.90f), 1.0f);
     snprintf(s.name, sizeof s.name, "%s %s", NAME_A[r.i(0, 15)], NAME_B[r.i(0, 15)]);
 
@@ -149,7 +157,7 @@ void generateShip(Ship& s, uint64_t seed, int level, const Difficulty& D) {
     }
 
     // ---- the weapons: mirrored pairs on the edge of the hull, and a bow gun if odd
-    const int count = clampi(3 + level / 3 + r.i(0, 2), 3, 9);
+    const int count = clampi(3 + tier + r.i(0, 2), 3, 9);
     // Each ship has its own doctrine: how much it favours each kind of weapon, so one is
     // all guns and another mostly missile pods and cannon.
     const float doctrine[4] = { r.range(0.3f, 1.9f), r.range(0.3f, 1.9f), r.range(0.3f, 1.9f), r.range(0.3f, 1.9f) };
@@ -177,7 +185,7 @@ void generateShip(Ship& s, uint64_t seed, int level, const Difficulty& D) {
         for (int tries = 0; tries < 40; ++tries) {
             x = lerpf(noseX * 0.72f, tailX * 0.82f, r.f());
             bool clash = false;
-            for (float t : taken) if (std::fabs(t - x) < L * 0.075f) clash = true;
+            for (float t : taken) if (std::fabs(t - x) < std::max(L * 0.075f, s.mountR * 2.3f)) clash = true;
             if (!clash) break;
         }
         taken.push_back(x);
@@ -204,7 +212,7 @@ void generateShip(Ship& s, uint64_t seed, int level, const Difficulty& D) {
         s.weapons.push_back(w);
     }
 
-    s.maxHp = s.hp = rules::SHIP_HULL_BASE + rules::SHIP_HULL_PER_LEVEL * (float)level;
+    s.maxHp = s.hp = (rules::SHIP_HULL_BASE + rules::SHIP_HULL_PER_LEVEL * (float)level) * std::pow(rules::SHIP_HULL_GROWTH, (float)(tier - 1));
     s.hullShare = rules::SHIP_WEAPONS_SHARE / std::max<size_t>(1, s.weapons.size());
     (void)D;
 }
@@ -275,8 +283,8 @@ void Game::spawnShip() {
         e.id = nextId++;
         e.alive = true;
         e.pos = dv2(s.pos.x + rot(w.local, s.angle).x, s.pos.y + rot(w.local, s.angle).y);
-        e.maxHp = e.hp = rules::SHIP_WEAPON_HP * D.hpScale;
-        e.radius = rules::SHIP_WEAPON_RADIUS;
+        e.maxHp = e.hp = rules::SHIP_WEAPON_HP * D.hpScale * std::pow(rules::SHIP_WEAPON_GROWTH, (float)(s.tier - 1));
+        e.radius = s.mountR;
         e.hasGun     = w.type == ShipWeapon::Gun;
         e.hasMissile = w.type == ShipWeapon::Missile;
         e.gunCd = rng.range(1.0f, 2.6f);
@@ -288,7 +296,7 @@ void Game::spawnShip() {
         e.cdScale = rules::SHIP_FIRE_SLOW * w.rate;
         e.power = w.power;  e.speedMul = w.speed;  e.shotsBonus = w.shots;
         if (w.type == ShipWeapon::Laser) {                 // the ray: a bigger, tougher mount, that waits a while before its first shot
-            e.radius = rules::SHIP_WEAPON_RADIUS * 1.35f;
+            e.radius = s.mountR * 1.35f;
             e.maxHp = e.hp = e.maxHp * 1.5f;
             e.gunCd = rng.range(2.5f, 5.0f);
         }
@@ -617,9 +625,10 @@ void Game::drawShips(Renderer& r) {
         for (const v2& e : s.engines) {
             const v2 a = place(e);
             const v2 back = fromAngle(s.angle + PIF);
-            const float flick = 22.0f + rng.f() * 30.0f + (s.aggro ? 14.0f : 0.0f);
+            const float sk = clampf(s.radius / 350.0f, 0.35f, 1.3f);      // the small ships have small flames
+            const float flick = (22.0f + rng.f() * 30.0f + (s.aggro ? 14.0f : 0.0f)) * sk;
             r.line(a, a + back * flick, mix(s.col, Col(1.0f, 0.85f, 0.6f), 0.6f), 2.8f);
-            r.circle(a, 5.0f, 8, c, I * 0.7f);
+            r.circle(a, 5.0f * sk, 8, c, I * 0.7f);
         }
     }
 }
@@ -678,6 +687,7 @@ void Game::drawWeaponMount(Renderer& r, const Enemy& e) {
     const Col c = mix(e.tint, Col(1, 1, 1), e.flash);
     const float I = 2.0f + 1.8f * e.flash;
     const float R = e.radius * 0.7f;
+    const float S = clampf(e.radius / 20.0f, 0.55f, 1.0f);      // the small ships have small mounts, with shorter barrels
     const v2 ad = fromAngle(e.aim), n = perp(ad);
 
     v2 base[6];
@@ -687,30 +697,30 @@ void Game::drawWeaponMount(Renderer& r, const Enemy& e) {
     switch (e.weapon) {
     case ShipWeapon::Gun:
         for (int k = -1; k <= 1; k += 2)
-            r.line(p + n * (3.0f * k), p + ad * (R + 15.0f) + n * (3.0f * k), c, I * 1.1f);
+            r.line(p + n * (3.0f * S * k), p + ad * (R + 15.0f * S) + n * (3.0f * S * k), c, I * 1.1f);
         break;
     case ShipWeapon::Missile:
         for (int k = -1; k <= 1; ++k) {
-            const v2 o = n * (5.0f * k);
-            r.line(p + o, p + ad * (R + 9.0f) + o, pal::MISSILE, I * 0.9f);
+            const v2 o = n * (5.0f * S * k);
+            r.line(p + o, p + ad * (R + 9.0f * S) + o, pal::MISSILE, I * 0.9f);
         }
-        r.line(p + ad * (R + 9.0f) - n * 7.0f, p + ad * (R + 9.0f) + n * 7.0f, c, I * 0.8f);
+        r.line(p + ad * (R + 9.0f * S) - n * (7.0f * S), p + ad * (R + 9.0f * S) + n * (7.0f * S), c, I * 0.8f);
         break;
     case ShipWeapon::Flak:
         for (int k = -1; k <= 1; ++k) {
             const v2 d = fromAngle(e.aim + 0.32f * k);
-            r.line(p + d * (R * 0.4f), p + d * (R + 12.0f), c, I);
+            r.line(p + d * (R * 0.4f), p + d * (R + 12.0f * S), c, I);
         }
         break;
     case ShipWeapon::Laser: {                        // the ray: a heavy lens that fills with light, and a ring that shows the recharge
         const float chg = e.burst == 1 ? 1.0f - clampf(e.burstCd / rules::LASER_CHARGE, 0.0f, 1.0f) : (e.burst == 2 ? 1.0f : 0.0f);
         const Col lc = mix(c, Col(1.0f, 0.9f, 0.8f), chg);
-        const v2 tip = p + ad * (R + 20.0f);
+        const v2 tip = p + ad * (R + 20.0f * S);
         for (int k = -1; k <= 1; k += 2) {
-            r.line(p + n * (9.0f * k), tip + n * (4.0f * k), lc, I * 1.2f);
-            r.line(tip + n * (4.0f * k), tip + ad * 12.0f, lc, I);
+            r.line(p + n * (9.0f * S * k), tip + n * (4.0f * S * k), lc, I * 1.2f);
+            r.line(tip + n * (4.0f * S * k), tip + ad * (12.0f * S), lc, I);
         }
-        r.circle(tip, 5.0f + 9.0f * chg, 14, lc, I * (0.8f + 1.6f * chg));
+        r.circle(tip, (5.0f + 9.0f * chg) * S, 14, lc, I * (0.8f + 1.6f * chg));
         if (e.burst == 0) {
             const float ready = 1.0f - clampf(e.gunCd / rules::LASER_RECHARGE, 0.0f, 1.0f);
             r.arc(p, e.radius + 9.0f, -PIF * 0.5f, -PIF * 0.5f + TAUF * ready, 24, mix(c, Col(1, 1, 1), ready >= 1.0f ? 0.6f : 0.0f), 1.6f);
@@ -720,11 +730,11 @@ void Game::drawWeaponMount(Renderer& r, const Enemy& e) {
         const float charge = e.burst == 1 ? 1.0f - clampf(e.burstCd / rules::CANNON_CHARGE, 0.0f, 1.0f) : 0.0f;
         const Col bc = mix(c, Col(1.0f, 0.9f, 0.6f), charge);
         for (int k = -1; k <= 1; k += 2)
-            r.line(p + n * (4.0f * k), p + ad * (R + 24.0f) + n * (4.0f * k), bc, I * (1.0f + charge));
-        r.line(p + ad * (R + 24.0f) - n * 6.0f, p + ad * (R + 24.0f) + n * 6.0f, bc, I);
+            r.line(p + n * (4.0f * S * k), p + ad * (R + 24.0f * S) + n * (4.0f * S * k), bc, I * (1.0f + charge));
+        r.line(p + ad * (R + 24.0f * S) - n * (6.0f * S), p + ad * (R + 24.0f * S) + n * (6.0f * S), bc, I);
         if (charge > 0.0f) {
-            r.circle(p + ad * (R + 24.0f), 26.0f * (1.0f - charge) + 4.0f, 14, Col(1.0f, 0.85f, 0.5f), 1.0f + 2.4f * charge);
-            r.point(p + ad * (R + 24.0f), 8.0f + 8.0f * charge, Col(1.0f, 0.9f, 0.6f), 3.0f * charge);
+            r.circle(p + ad * (R + 24.0f * S), (26.0f * (1.0f - charge) + 4.0f) * S, 14, Col(1.0f, 0.85f, 0.5f), 1.0f + 2.4f * charge);
+            r.point(p + ad * (R + 24.0f * S), 8.0f + 8.0f * charge, Col(1.0f, 0.9f, 0.6f), 3.0f * charge);
         }
     } break;
     }

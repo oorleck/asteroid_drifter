@@ -175,7 +175,7 @@ bool Game::bulletHitsTargets(Bullet& b) {
         if (hullDistance(s, b.pos) > b.caliber * 0.5f) continue;
         if (b.heavy) shellBurst(b);
         else {
-            damageShip(s, rules::RIFLE_DAMAGE * rules::SHIP_RIFLE_FACTOR, b.pos);
+            damageShip(s, rules::RIFLE_DAMAGE * s.riflePass, b.pos);
             spawnSparks(b.pos, b.vel * -0.1f, 2, 120.0f, Col(1.0f, 0.9f, 0.7f), 0.25f);
         }
         return true;
@@ -209,7 +209,7 @@ void Game::explode(dv2 pos, float radius, float enemyDmg, float playerDmg,
             const float d = std::max(0.0f, hullDistance(s, pos));
             if (d >= radius) continue;
             const float f = 1.0f - d / radius;
-            damageShip(s, std::min(enemyDmg, s.maxHp * rules::SHIP_NUKE_SHARE) * (0.4f + 0.6f * f), pos);
+            damageShip(s, std::min(enemyDmg, s.maxHp * s.nukeShare) * (0.4f + 0.6f * f), pos);
         }
     }
     for (Missile& m : missiles) {

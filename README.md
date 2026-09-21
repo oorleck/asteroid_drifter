@@ -20,7 +20,7 @@ whole thing links against `opengl32`, `gdi32`, `winmm` (sound) and `ws2_32`
 
 ## The game
 
-**Each level** puts a beacon at a random distance (roughly 1200-1700 units on
+**Each level** puts a beacon at a random distance (roughly 1800-2550 units on
 level 1, growing 4% a level) and gives you a time limit worked out from it,
 about 50 seconds. The limit is deliberately roomy: the point is to have time to
 *fight*, not just run. Reach the beacon and you are paid **credits** for the
@@ -63,15 +63,19 @@ Everything scales each level: how many there are, how accurately and often they
 shoot, how hard they hit, how fast their missiles fly and turn, and how much
 health they have. Level 1 is gentle; level 4 is not. Enemy shots scatter half as much as they first did, must line up more closely before they fire, and bend less in gravity, so they land more often.
 
-**Warships.** On level 2, and then about every other level (mostly the even
-ones, now and then an odd one from level 7), a big generated warship is berthed
-somewhere on the way to the beacon, in a cleared patch of sky. Each one is built
+**Warships.** On level 3, and then every third level (6, 9, 12...), a big generated warship is
+berthed somewhere on the way to the beacon, in a cleared patch of sky. **Each one is bigger and
+tougher than the last**: the first is about six turrets long (200 units, and nearly as wide), each
+next one 1.4 times the length (up to about 1500), with 1.5 times the hull, thicker armour (a
+rifle round gets through less, and a nuke takes a smaller share of the hull: two nukes for the
+first, more for the later ones), tougher weapons and more of them.
+Each one is built
 from a random seed, so no two are alike:
 
 * **Shape.** One of four families (dart, blocky cruiser, forked-bow carrier,
   wedge) with random proportions, steps and swept wings, drawn as a double
-  outline with panel lines, a bridge and flickering exhaust. Roughly 450-800
-  units long: a rock is a pebble beside one.
+  outline with panel lines, a bridge and flickering exhaust. From about 200 units
+  long on level 3 to well over a thousand later: a rock is a pebble beside one.
 * **Colour and name.** A random hue, and a name like *OBSIDIAN LEVIATHAN*.
 * **Weapons.** 3 to 9 of them in mirrored pairs on the edge of the hull, more on
   later levels. Each is one of four kinds: **guns** (bursts of bullets),
@@ -116,7 +120,7 @@ freezes and the depot opens. Click a row, or press its number:
 | --- | --- | --- | --- |
 | **Homing shell** | `F` / middle mouse | 300 | The charge shot. A heavy shell that curves onto the nearest enemy in front of it, but in a wide arc (a turning radius of about 400 units), so you have to aim it. It **goes off after 1.75 s** (about 1300 units), so a fight cannot be taken from further away than that, and gravity bends it 60% less than the rifle. |
 | **Missile salvo** | `G` | 450 (6 salvos), then 150 for 6 more | Five small missiles at once, each sent after a *different* target. With fewer than five targets they double up; incoming enemy missiles count as targets. The missiles are small and **blow up after 2.3 s** wherever they are (about 1300 units), and will not lock onto anything further off than 1200. |
-| **Nuke** | `N` | 400 for 3 | A slow grenade, dragged hard by gravity, with a 3.6 s fuse shown on the bomb itself. A huge blast: it vaporises rock, kills everything in its radius and hurts you if you are close. |
+| **Nuke** | `N` | 400 for 3 | A grenade thrown at 340 units a second and pulled down by gravity 2.5 times as hard as a loose rock is (it was 1.7), so it arcs down into the rocks, with a 3.6 s fuse shown on the bomb itself. A huge blast: it vaporises rock, kills everything in its radius and hurts you if you are close. |
 | **Force field** | `X` | 500 | A bubble that shoves bullets, missiles, drones and rocks away. Costs energy while it is on. |
 | **Blast shield** | hold Left Alt | 350, then 120 to refill | A 30 degree plate held toward the cursor. It stops bullets and missiles that reach it and soaks up blasts that go off inside its arc, spending charge equal to the damage it stops. When it is empty it stays down until you refill it. |
 | **Fractal shell** | `Z` | 1400 (3 shells), then 500 for 3 more | The most expensive thing in the depot, and the most powerful against groups. A homing shell that **splits in two** every so often, up to **five times**, so one shot can become **32 pieces**, and every piece homes on its own target. Each generation is **0.45** of the one before (half, less a tenth), so its power is spread across a swarm rather than spent in one place. |
@@ -297,7 +301,7 @@ onward). Nothing to install or download.
 | `W` / `Up` / `Space` | Jump **toward the cursor**, three times as high as it once was (450 units a second off the ground), and it kicks the rock back. It never goes into the ground: a cursor below or level with the surface gives a low leap along it |
 | Mouse | Aim |
 | Left mouse | Rapid fire. Bullets tunnel, so hold it to drill through |
-| Right mouse / `Shift` | Rocket: thrust toward the cursor, burns fuel |
+| Right mouse / `Shift` | Rocket: thrust toward the cursor (360 units/s², weakened in steps from 750), burns fuel |
 | `Left Alt` (hold) | Blast shield, once bought. Right Alt / AltGr does nothing |
 | `F` / middle mouse | Homing shell, once bought |
 | `G` | Missile salvo, once bought |
@@ -315,7 +319,7 @@ onward). Nothing to install or download.
 | `F11` / `F12` | Fullscreen / save a PNG screenshot |
 | `Esc` | Quit |
 
-The rocket burns fuel from a small tank (32 units, burning 25 a second, so 1.3 s of thrust from full) that refills at 18.7 a second while you are not using it. The force field
+The rocket burns fuel from a small tank (24 units, burning 25 a second, so 0.96 s of thrust from full) that refills at 15.9 a second while you are not using it. The force field
 runs off an energy bar: it switches itself off when that empties and will not
 relight until it has recovered a little.
 
@@ -560,8 +564,8 @@ The rest of the feel lives in two other blocks:
 A few notes on what interacts with what:
 
 * **Time limit.** `rules::SPEED_BASE` is the average speed a player is expected
-  to hold, and the limit is distance divided by it (worked out from the distance before `DIST_SCALE` halves it, then multiplied by `TIME_SCALE`, 1.2). A pilot bot (`-leveltest`)
-  crosses a level in about 5-18 s at the current thrust, so a 40-70 s limit leaves
+  to hold, and the limit is distance divided by it (worked out from the distance before `DIST_SCALE` (0.75) shortens it, then multiplied by `TIME_SCALE`, 1.2). A pilot bot (`-leveltest`)
+  crosses a level in about 7-30 s at the current thrust, so a 40-70 s limit leaves
   most of the clock for fighting. If you make the rocket weaker, raise the limit.
 * **Walking.** `WALK_SPEED` and `AIR_ACCEL` are currently 0, so `A`/`D` do not
   move the spaceman and all travel is by jump and rocket. `-walktest` reports
@@ -571,7 +575,7 @@ A few notes on what interacts with what:
   `-rockettest` checks that thrust never exceeds that budget.
 * Gravity is `G * m * r / (r^2 + soft)^1.5` with softening proportional to the
   rock's radius. Since a rock's mass scales with its area, **surface gravity
-  works out roughly the same on every rock** (about 650 u/s^2: `GRAV_CONST` is 258.75; it began at 100). Held straight up from standing, the rocket still lifts you about 400 units (`-jumptest` reports it).
+  works out roughly the same on every rock** (about 650 u/s^2: `GRAV_CONST` is 258.75; it began at 100), and **the spaceman feels 30% more than that** (`PLAYER_GRAV` 1.3), so a jump falls back faster and the rocket has to work harder to lift him. The rocket is now weaker than the pull at a rock's surface, so held straight up from standing it will not lift him off at all: it takes a jump first, and the rocket then carries him on (`-jumptest` reports both).
 * Bullet **gravity** (`BULLET_GRAV`, `HEAVY_GRAV` in `src/game.h`) is a
   multiplier on the pull of nearby rock. Real-strength gravity bends a 1650 u/s
   round by about 4 units over 330 units of flight, which is invisible, so bullets
@@ -599,8 +603,8 @@ A few notes on what interacts with what:
 * A very light velocity damping is applied to rocks, and a lighter one to their spin (3% a second, a half-
   life of about 23 s). It is not physical in vacuum; it bleeds off the energy the positional contact
   solver injects. **Every rock is born spinning**: the speed is drawn from a normal distribution
-  (mean none, standard deviation 0.3 rad/s, cut off at three), so about two thirds turn slower than
-  0.3 rad/s and a few turn at nearly one, half each way. A big rock's rim then moves at 50 units a
+  (mean none, standard deviation 1.2 rad/s, cut off at three), so about two thirds turn slower than
+  1.2 rad/s and a few turn at nearly four (a turn every 1.6 s), half each way. A big rock's rim then moves at 200 units a
   second or more, and you are carried with the ground you stand on. `-spintest` checks the bell curve.
 * The force field pushes the rocks around it but not the one you are standing on.
 * The pilot bot ignores enemies, so its damage figures say how dangerous a level

@@ -380,7 +380,7 @@ int main(int argc, char** argv) {
         const float dt = 1.0f / 60.0f;
         game.invincible = true;
         game.floating = true;
-        game.startLevel(2);
+        game.startLevel(3);
         game.level.slots.clear();
         game.level.diff.aggroRange = 1.0f;                   // keep them calm for the portrait
         for (int i = 0; i < 8; ++i) {
@@ -585,7 +585,7 @@ int main(int argc, char** argv) {
 
         // 6c. a warship
         {
-            game.startLevel(2);
+            game.startLevel(3);
             game.level.slots.clear();
             game.pl.hasHoming = game.pl.hasSalvo = true;  game.pl.salvoAmmo = 12;
             const dv2 A = game.level.ship.anchor;
@@ -884,7 +884,14 @@ int main(int argc, char** argv) {
         {
             game.pl.hasSalvo = false;
             Slot s;  s.hasGun = true;  s.hasMissile = true;
-            game.spawnDrone(s, dv2(game.pl.pos.x + 260.0, game.pl.pos.y + 120.0));
+            // Somewhere round the player with open sky between them (rock may be in the way at any one spot).
+            dv2 at(game.pl.pos.x + 260.0, game.pl.pos.y + 120.0);
+            for (int k = 0; k < 24; ++k) {
+                const float a = 0.4f + k * 0.26f;
+                const dv2 cand(game.pl.pos.x + std::cos(a) * 340.0, game.pl.pos.y + std::sin(a) * 340.0);   // (missiles are only launched from beyond 300)
+                if (game.world.solidAt(cand) < 0 && game.clearLine(cand, game.pl.pos)) { at = cand; break; }
+            }
+            game.spawnDrone(s, at);
             Enemy& d = game.enemies.back();
             d.aggro = true;  d.gunCd = 0.0f;  d.missileCd = 0.0f;
             run(idle, 60 * 3);
@@ -979,7 +986,7 @@ int main(int argc, char** argv) {
         {
             game.startRun(renderer);
             game.invincible = true;
-            game.startLevel(2);
+            game.startLevel(3);
             game.level.slots.clear();
             const dv2 A = game.level.ship.anchor;
             game.pl.pos = dv2(A.x, A.y - 1500.0);
@@ -2266,24 +2273,47 @@ int main(int argc, char** argv) {
         game.invincible = true;
         game.floating = true;
         {
-            int with = 0, evenWith = 0, oddWith = 0;
             std::string pattern;
+            bool exact = true;
+            float prevLen = 0.0f, prevHull = 0.0f;
+            bool growing = true, tougher = true;
             for (int n = 1; n <= 30; ++n) {
                 game.startLevel(n);
                 const bool has = game.level.hasShip;
                 pattern += has ? 'S' : '.';
-                if (n >= 2) { with += has; (n % 2 == 0 ? evenWith : oddWith) += has; }
+                if (has != (n % 3 == 0)) exact = false;
+                if (has) {
+                    float length = 0.0f;
+                    for (const v2& p : game.level.ship.hull) length = std::max(length, 2.0f * std::fabs(p.x));
+                    printf("    level %2d: tier %d, %4.0f long, hull %5.0f, mounts %.0f units, %d weapons, rifle gets %.0f%%, a nuke takes %.0f%% of it\n", n, game.level.ship.tier, length,
+                           game.level.ship.maxHp, game.level.ship.mountR, (int)game.level.ship.weapons.size(),
+                           100.0f * game.level.ship.riflePass / rules::SHIP_RIFLE_FACTOR, 100.0f * game.level.ship.nukeShare);
+                    if (n >= 6 && length < prevLen * 1.15f && length < rules::SHIP_LENGTH_CAP * 0.9f) growing = false;
+                    if (n >= 6 && game.level.ship.maxHp < prevHull * 1.3f) tougher = false;
+                    prevLen = length;  prevHull = game.level.ship.maxHp;
+                }
             }
             printf("  levels 1-30: %s\n", pattern.c_str());
             game.startLevel(1);
             check(!game.level.hasShip, "level 1 has no warship");
             game.startLevel(2);
-            check(game.level.hasShip, "level 2 has the first one");
-            check(with >= 10 && with <= 20, "roughly every other level from 2 on has one");
-            check(evenWith > oddWith * 2, "mostly the even levels");
-            game.startLevel(4);
+            check(!game.level.hasShip, "nor does level 2");
+            game.startLevel(3);
+            check(game.level.hasShip, "level 3 has the first one");
+            check(exact, "and from there every third level, and no others");
+            check(growing, "each warship is clearly bigger than the one before");
+            check(tougher, "and each has a much tougher hull");
+            game.startLevel(3);
+            {
+                float length = 0.0f, width = 0.0f;
+                for (const v2& p : game.level.ship.hull) { length = std::max(length, 2.0f * std::fabs(p.x)); width = std::max(width, 2.0f * std::fabs(p.y)); }
+                printf("    the first: %.0f by %.0f units, against a turret 34 across\n", length, width);
+                check(length > 4.0f * 34.0f && length < 8.0f * 34.0f, "the first warship is about six times the length of a turret");
+                check(width > 2.0f * 34.0f, "and more than twice its width, being stubby");
+            }
+            game.startLevel(6);
             const std::string a = game.level.ship.name;
-            game.startLevel(4);
+            game.startLevel(6);
             check(a == game.level.ship.name && game.level.hasShip, "a level always brings the same ship back");
         }
 
@@ -2326,7 +2356,7 @@ int main(int argc, char** argv) {
         // ---- a level with a ship: berth, clock, spawn
         game.startRun(renderer);
         game.invincible = true;
-        game.startLevel(2);
+        game.startLevel(3);
         game.level.slots.clear();
         game.level.diff.aggroRange = 1.0f;                   // asleep until a test wakes it
         const dv2 A = game.level.ship.anchor;
@@ -2475,7 +2505,7 @@ int main(int argc, char** argv) {
         {
             game.startRun(renderer);
             game.invincible = false;
-            game.startLevel(2);
+            game.startLevel(3);
             game.level.slots.clear();
             const std::string name = game.level.ship.name;
             const dv2 anchor = game.level.ship.anchor;
@@ -3386,7 +3416,7 @@ int main(int argc, char** argv) {
                 in.pressed[VK_SPACE] = game.pl.grounded;
                 if (game.pl.grounded) { thrustDir = norm(thrustDir + game.pl.up * 1.6f); }
                 aimAt(in, dv2(game.pl.pos.x + thrustDir.x * 1000.0, game.pl.pos.y + thrustDir.y * 1000.0));
-                const bool tank = game.pl.fuel > (in.mouse[1] ? 2.0f : 30.0f);
+                const bool tank = game.pl.fuel > (in.mouse[1] ? 0.02f : 0.35f) * tune::FUEL_MAX;   // burn in bursts: start above a third of the tank
                 in.mouse[1] = tank && (needBurn || game.pl.grounded);
                 game.update(renderer, in, dt);
                 if (lv == 1 && frames % 120 == 0 && frames <= 60 * 50)
@@ -3509,7 +3539,7 @@ int main(int argc, char** argv) {
                dists[0], dists[1], dists[2], dists[3], dmgAt[0], dmgAt[1], dmgAt[2], dmgAt[3]);
         check(dmgAt[0] > 90.0f, "standing at the centre is lethal");
         check(dmgAt[0] > dmgAt[1] && dmgAt[1] > dmgAt[2], "damage falls off with distance");
-        check(dmgAt[3] < 1.0f, "well outside the blast, no damage");
+        check(dmgAt[3] < 5.0f, "well outside the blast, next to no damage");   // (a fast-spinning rock can scrape you in that frame)
 
         printf("nuketest: %s\n", failures == 0 ? "PASS" : "FAIL");
         fflush(stdout);
@@ -4023,7 +4053,7 @@ int main(int argc, char** argv) {
         auto run = [&](int n) { for (int i = 0; i < n; ++i) { hold(); game.update(renderer, idle, dt); } };
 
         // ---- the numbers you asked for
-        check(std::fabs(tune::FUEL_REGEN - 22.0f * 0.85f) < 1e-3f, "the rocket's fuel refills 15% slower than before (18.7 a second)");
+        check(std::fabs(tune::FUEL_REGEN - 22.0f * 0.85f * 0.85f) < 0.05f, "the rocket's fuel refills 15% slower again (15.9 a second)");
         check(tune::HEAVY_GRAV == 10.0f * 0.4f, "the F shell feels 60% less gravity");
         game.bullets.clear();
         hold();  game.pl.aim = 0.0f;  game.pl.fractalCd = 0.0f;
@@ -4128,11 +4158,11 @@ int main(int argc, char** argv) {
                (int)n, mean, sd, 100.0 * in1 / std::max<size_t>(1, n), 100.0 * in2 / std::max<size_t>(1, n), 100.0 * pos / std::max<size_t>(1, n));
         check(n > 200, "there are plenty of rocks to look at");
         check(std::fabs(mean) < 0.05, "the spins are centred on none");
-        check(sd > 0.25 && sd < 0.35, "with a spread of about 0.3 rad/s");
+        check(sd > 1.05 && sd < 1.35, "with a spread of about 1.2 rad/s (twice what it was, and twice that again)");
         check(in1 > 0.60 * n && in1 < 0.76 * n, "about 68% of them within one standard deviation");
         check(in2 > 0.91 * n && in2 < 0.99 * n, "and about 95% within two: a bell curve, not a flat spread");
         check(pos > 0.42 * n && pos < 0.58 * n, "half turn each way");
-        check(still < 0.15 * n, "and hardly any sit still");
+        check(still < 0.08 * n, "and hardly any sit still");
         // The Rng itself.
         Rng r(12345);
         double m2 = 0, s2 = 0;
@@ -4183,8 +4213,8 @@ int main(int argc, char** argv) {
         p += n0 * 9.0f;
 
         printf("jumptest: the tank holds %.0f, was 100; gravity constant %.0f, was 100\n", tune::FUEL_MAX, cfg::GRAV_CONST);
-        check(tune::FUEL_MAX == 32.0f && game.pl.fuel == tune::FUEL_MAX, "the fuel tank is at 32 (20% smaller again) and starts full");
-        check(std::fabs(tune::THRUST - 562.5f) < 0.01f, "the rocket is 25% weaker than the 750 it was");
+        check(tune::FUEL_MAX == 24.0f && game.pl.fuel == tune::FUEL_MAX, "the fuel tank is at 24 (25% smaller again) and starts full");
+        check(std::fabs(tune::THRUST - 360.0f) < 0.01f, "the rocket is 360: 20% weaker than the 450 it was");
         check(std::fabs(cfg::GRAV_CONST - 258.75f) < 0.01f, "gravity is 15% stronger again (258.75, from 225)");
 
         struct Case { const char* name; float degFromUp; };            // clockwise from the surface normal
@@ -4228,6 +4258,20 @@ int main(int argc, char** argv) {
             else if (cs.degFromUp != 180.0f)
                 check(dot(dir, right) * std::sin(a) > 0.9f, "a cursor at or below the horizon gives a low leap toward that side");
         }
+        // The spaceman feels gravity 30% harder than anything else: one frame of free fall against the field's own pull.
+        {
+            check(std::fabs(tune::PLAYER_GRAV - 1.3f) < 1e-4f, "gravity pulls the spaceman 30% harder");
+            const dv2 hover(rock.pos.x, rock.pos.y + rock.radius + 260.0);
+            game.pl.pos = hover;  game.pl.vel = v2(0, 0);  game.pl.grounded = false;  game.pl.up = n0;
+            const v2 g = game.world.gravityAt(hover, 2600.0);
+            Input idle;
+            game.cam.pos = hover;  game.cam.angle = 0.0f;
+            game.update(renderer, idle, dt);
+            const float pulled = len(game.pl.vel), field = len(g) * dt;
+            printf("      one frame in free fall: the spaceman gained %.3f u/s, the field alone would give %.3f (x%.2f)\n", pulled, field, field > 0 ? pulled / field : 0.0f);
+            check(field > 0.0f && std::fabs(pulled / field - tune::PLAYER_GRAV) < 0.08f, "and in free fall he speeds up 1.3 times as fast as the field's pull");
+        }
+
         // How high is a plain jump? Three times what 260 gave: v^2 / 2g, so the speed is 260 x sqrt(3).
         {
             check(std::fabs(tune::JUMP_SPEED - 260.0f * std::sqrt(3.0f)) < 0.2f, "the jump speed is 260 times the square root of three: three times the height");

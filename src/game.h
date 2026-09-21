@@ -41,10 +41,11 @@ namespace tune {
     static const float AIR_ACCEL   = 0.0f;
     static const float JUMP_SPEED  = 450.3f;   // 260 x sqrt(3): three times the height at the same gravity
     static const float JUMP_MIN_LIFT = 0.17f;  // a jump leaves the ground at least this far (sine, about 10 degrees) off the surface
-    static const float THRUST      = 562.5f;   // 25% weaker than the 750 it was
-    static const float FUEL_MAX    = 32.0f;    // the tank (it was 100, 80, 40); burn and regen are unchanged, so the duty cycle is too: 1.3 s of burn from full
+    static const float THRUST      = 360.0f;   // 20% weaker again (750, 562.5, 450, 360)
+    static const float PLAYER_GRAV = 1.3f;     // the spaceman feels this much more than the rocks and shots do (30% up)
+    static const float FUEL_MAX    = 24.0f;    // the tank (it was 100, 80, 40, 32); burn and regen are unchanged, so the duty cycle is too: 0.96 s of burn from full
     static const float FUEL_BURN   = 25.0f;
-    static const float FUEL_REGEN  = 18.7f;    // 15% slower than the 22 it was
+    static const float FUEL_REGEN  = 15.9f;    // 15% slower again (22, 18.7, 15.9)
     static const float FUEL_RESTART = 12.0f;   // after running dry, fuel needed before the rocket relights
     static const float BULLET_V    = 1650.0f;
     static const float BULLET_CAL  = 5.2f;
@@ -247,6 +248,10 @@ struct Ship {
     float berth = 500;             // rocks are kept this far from the anchor
     float hp = 1, maxHp = 1, flash = 0;
     float hullShare = 0.1f;        // hull lost when one weapon is destroyed
+    int   tier = 1;                // 1 for the first ship, 2 for the next... each is bigger and tougher
+    float mountR = 20.0f;          // how big its weapon mounts are (the small ships have small ones)
+    float riflePass = 0.45f;       // share of a rifle round that gets through the armour
+    float nukeShare = 0.6f;        // share of the full hull a nuke can take in one go
     float phase = 0;
     bool  aggro = false;
     Col   col;
