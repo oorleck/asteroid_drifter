@@ -865,7 +865,7 @@ int main(int argc, char** argv) {
             Input fz;  fz.pressed['Z'] = true;  fz.mousePx = v2(gWidth * 0.8f, gHeight * 0.5f);
             run(fz, 1);
             check(plays(Sfx::FractalFire) >= 1, "the fractal shell has its own launch sound");
-            run(idle, 40);
+            run(idle, 150);                                  // the timer is the cursor distance at launch speed: allow a second or two
             check(plays(Sfx::FractalSplit) >= 1, "and a chirp each time it divides");
             game.pl.nukeAmmo = 1;  game.pl.nukeCd = 0.0f;
             Input n;  n.pressed['N'] = true;
@@ -2618,7 +2618,7 @@ int main(int argc, char** argv) {
             check(monotonic, "the farther the cursor, the longer between splits, never shorter");
             const float a1 = Game::fractalSplitDistance(500.0f), a2 = Game::fractalSplitDistance(1000.0f);
             printf("      aiming at 500 units: splits every %.0f; at 1000 units: every %.0f\n", a1, a2);
-            check(std::fabs(a2 / a1 - 2.0f) < 0.01f, "in the middle of the range it is proportional: twice as far, twice as long");
+            check(std::fabs(a1 - 500.0f) < 0.01f && std::fabs(a2 - 1000.0f) < 0.01f, "in the middle of the range it is the cursor distance itself");
         }
 
         // ---- a fresh level, and open space to fire into
@@ -2648,7 +2648,7 @@ int main(int argc, char** argv) {
             game.bullets.clear();
             game.enemies.clear();
             const dv2 muzzle(C.x + 16.0, C.y);
-            fireAt(500.0f, 0.0f);                                   // splits every 200 units
+            fireAt(300.0f, 0.0f);                                   // splits every 300 units, about 0.54 s
             check(game.bullets.size() == 1 && game.bullets[0].gen == 0, "firing makes one shell");
             check(game.bullets[0].homing, "and it is a homing device");
 
@@ -2657,7 +2657,7 @@ int main(int argc, char** argv) {
             double firstSplitDist = -1;
             std::vector<size_t> whenCount(8, 0);
             size_t frames = 0;
-            for (; frames < 60 * 3; ++frames) {
+            for (; frames < 60 * 8; ++frames) {
                 runFrames(1);
                 peak = std::max(peak, game.bullets.size());
                 if (firstSplitDist < 0 && game.bullets.size() >= 2) {
@@ -2681,7 +2681,7 @@ int main(int argc, char** argv) {
             check(allHoming, "every piece is a homing device");
             check(powerLaw, "each generation is exactly 0.45 of the one before (half, less a tenth)");
             check(std::fabs(rules::FRACTAL_CHILD - 0.5f * 0.9f) < 1e-6f, "and 0.45 is 50% minus 10%");
-            check(std::fabs(firstSplitDist - 200.0) < 40.0, "the first split comes after the interval the cursor distance asked for");
+            check(std::fabs(firstSplitDist - 300.0) < 40.0, "the first split comes after the interval the cursor distance asked for");
         }
         {   // the same shot with the cursor twice as far away splits later
             double dNear = 0, dFar = 0;
@@ -2720,7 +2720,7 @@ int main(int argc, char** argv) {
             }
             {   // the fractal shell, same shot
                 const auto ids = arena(1e6f);
-                fireAt(700.0f, 0.0f);
+                fireAt(350.0f, 0.0f);                                   // the cross half way to them: it divides before it arrives
                 for (int i = 0; i < 60 * 5; ++i) runFrames(1);
                 hunt.fractal[0] = lost(ids.first);  hunt.fractal[1] = lost(ids.second);
             }
@@ -2739,7 +2739,7 @@ int main(int argc, char** argv) {
                 Enemy b = plainDrone(dv2(C.x + 700.0, C.y - 200.0));
                 Enemy c2 = plainDrone(dv2(C.x + 1000.0, C.y));
                 game.enemies.push_back(a);  game.enemies.push_back(b);  game.enemies.push_back(c2);
-                fireAt(700.0f, 0.0f);
+                fireAt(250.0f, 0.0f);                                   // divides early, so the swarm has room to spread
                 for (int i = 0; i < 60 * 5; ++i) runFrames(1);
                 int left = 0;
                 for (const Enemy& e : game.enemies) if (e.alive) ++left;

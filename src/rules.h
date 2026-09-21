@@ -140,9 +140,9 @@ namespace rules {
     static const float FRACTAL_TURN       = 1.95f;    // rad/s a piece can turn toward its target: a radius of about 290 units
     static const float FRACTAL_CAL        = 18.0f;    // the parent's hole in a rock
     static const float FRACTAL_MIN_CAL    = 4.0f;
-    static const float FRACTAL_SPLIT_K    = 0.40f;    // it splits every this share of the distance to the cursor...
+    static const float FRACTAL_SPLIT_K    = 1.00f;    // the split timer covers this share of the cursor distance at launch speed: 1.0 puts the first split on the cross (with no gravity)...
     static const float FRACTAL_SPLIT_MIN  = 90.0f;    // ...but never more often than this
-    static const float FRACTAL_SPLIT_MAX  = 1100.0f;  // ...or more rarely
+    static const float FRACTAL_SPLIT_MAX  = 2500.0f;  // ...or more rarely (further than the cursor can be from you)
     static const float FRACTAL_COOLDOWN   = 2.4f;
     static const int   FRACTAL_LOAD       = 3;        // shells per purchase
     static const int   FRACTAL_MAX        = 12;

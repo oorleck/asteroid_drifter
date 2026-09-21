@@ -344,8 +344,8 @@ void Game::drawShield(Renderer& r) {
 // it comes apart into two, which fly apart a little and each carry on homing, each
 // on a different target where there is more than one. A child has 0.45 of its
 // parent's strength (half, less a tenth), and a piece that is five generations down
-// stops splitting. How often it splits depends on how far away you are pointing:
-// aim close and it divides quickly into a cloud; aim far and it flies a long way as
+// stops splitting. How often it splits depends on how far away you are pointing (on a timer;
+// with no gravity the interval is exactly the cursor distance): aim close and it divides quickly into a cloud; aim far and it flies a long way as
 // one heavy shell before it starts.
 static Col fractalColour(int gen) {
     const float t = clampf(gen / (float)rules::FRACTAL_SPLITS, 0.0f, 1.0f);
@@ -356,10 +356,17 @@ float Game::fractalSplitDistance(float aimDist) {
     return clampf(rules::FRACTAL_SPLIT_K * aimDist, rules::FRACTAL_SPLIT_MIN, rules::FRACTAL_SPLIT_MAX);
 }
 
+// It splits on a timer, not by measured distance, so gravity can bend a shot without
+// throwing off the rhythm; the timer is set to the time the cursor distance takes at the
+// launch speed, which makes it exactly the cursor distance where there is no gravity.
+float Game::fractalSplitTime(float aimDist, float speed) {
+    return fractalSplitDistance(aimDist) / std::max(1.0f, speed);
+}
+
 // How long a piece needs to live to get through all the splits still ahead of it.
-static float fractalLife(int gen, float splitEvery) {
+static float fractalLife(int gen, float splitTime) {
     const int left = rules::FRACTAL_SPLITS - gen + 1;
-    return clampf(left * splitEvery / rules::FRACTAL_SPEED + 2.0f, 3.0f, 9.0f);
+    return clampf(left * splitTime + 2.0f, 3.0f, 24.0f);
 }
 
 void Game::fireFractal(float aimDist) {
@@ -379,7 +386,7 @@ void Game::fireFractal(float aimDist) {
     b.owner = pl.id;
     b.gen = 0;
     b.power = 1.0f;
-    b.splitEvery = fractalSplitDistance(aimDist);
+    b.splitEvery = fractalSplitTime(aimDist, len(b.vel));
     b.life = fractalLife(0, b.splitEvery);
     b.col = fractalColour(0);
     bullets.push_back(b);
@@ -423,7 +430,7 @@ void Game::splitFractal(const Bullet& parent) {
         Bullet c = parent;
         c.gen = parent.gen + 1;
         c.power = parent.power * rules::FRACTAL_CHILD;
-        c.travel = 0.0f;
+        c.flown = 0.0f;
         c.vel = rot(dir, turn) * speed;
         c.caliber = std::max(rules::FRACTAL_MIN_CAL, parent.caliber * rootP);
         c.budget = parent.budget * rootP;

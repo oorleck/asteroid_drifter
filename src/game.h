@@ -81,9 +81,9 @@ struct Bullet {
     float gravScale = 1.0f;        // multiplier on the pull of nearby rock
     int   owner = -1;              // who fired it: a player id, or -1 for none (versus mode scores by this)
     // The fractal shell: gen is 0 for the parent and counts up with each split (-1 = an ordinary round);
-    // power is its strength against the parent's 1.0; it splits when it has flown splitEvery units.
+    // power is its strength against the parent's 1.0; it splits when it has been in the air splitEvery seconds since its last split.
     int   gen = -1;
-    float power = 1.0f, travel = 0.0f, splitEvery = 0.0f;
+    float power = 1.0f, flown = 0.0f, splitEvery = 0.0f;   // flown: seconds since the last split
     bool  heavy = false;
     bool  homing = false;          // the homing shell steers onto an enemy
     int   targetId = 0;
@@ -407,7 +407,8 @@ struct Game {
     void fireSalvo(v2 aimDir);
     // ---- the fractal shell (weapons.cpp)
     float lastAimDist = 400.0f;                         // how far the cursor is from the spaceman, in world units
-    static float fractalSplitDistance(float aimDist);   // how far a shell flies between splits, given that
+    static float fractalSplitDistance(float aimDist);   // how far a shell would fly between splits with no gravity: the cursor distance
+    static float fractalSplitTime(float aimDist, float speed);   // ...and the time that takes at a given launch speed: what it actually splits by
     void fireFractal(float aimDist);
     void splitFractal(const Bullet& parent);
     void shellBurst(const Bullet& b);                   // a heavy shell going off where it landed

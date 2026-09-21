@@ -111,7 +111,7 @@ freezes and the depot opens. Click a row, or press its number:
 
 Purchases last for the run. Nukes can only be bought, never found.
 
-**The fractal shell** is worth understanding, because how you aim it changes what it does. *How far the cursor is from the spaceman decides how far the shell flies between splits*: 40% of that distance, never less than 90 units or more than 1100. Point at something close and it divides almost at once into a cloud that spreads over a cluster; point far away and it flies a long way as a single heavy shell, then divides late, over the target. Whenever it splits, the two pieces leave the parent's line by about 17 degrees and are each given a *different* target, the one on the left to the left-hand piece, so a volley spreads over a group rather than piling onto the nearest enemy.
+**The fractal shell** is worth understanding, because how you aim it changes what it does. *How far the cursor is from the spaceman decides how far the shell flies between splits*: the split is on a timer, set to the time the shell takes to fly as far as the cross is from you. With no gravity that means it splits exactly at the cross (and again at the same spacing after that), and gravity from rock bends it off that mark, since the timer does not care. Never less than 90 units of flight. Put the cross on a cluster and the first split happens over the cluster; point at something close and it divides almost at once into a cloud; point far away and it flies a long way as a single heavy shell, then divides late. Later splits come at the same time interval. Whenever it splits, the two pieces leave the parent's line by about 17 degrees and are each given a *different* target, the one on the left to the left-hand piece, so a volley spreads over a group rather than piling onto the nearest enemy.
 
 | Generation | Pieces | Strength | Blast damage | Blast radius |
 | --- | --- | --- | --- | --- |
@@ -122,7 +122,7 @@ Purchases last for the run. Nukes can only be bought, never found.
 | 4 | 16 | 4% | 10 | 17 |
 | 5 (does not split) | 32 | 1.8% | 4 | 11 |
 
-Damage falls off toward the edge of a blast, and a piece that hits something bursts there without splitting further. In the test (`-fractaltest`) one shell did about **3 times the damage of a homing shell** to two drones 600 units apart, where the homing shell can only find one of them, and one shell cleared three ordinary drones.
+Damage falls off toward the edge of a blast, and a piece that hits something bursts there without splitting further. In the test (`-fractaltest`) one shell aimed at a pair of drones 600 units apart did nearly **3 times the damage of a homing shell**, which can only find one of them, and one shell aimed a little short of a cluster cleared three ordinary drones. Aim it so it divides *before* it reaches the target: a shell that arrives whole is just a heavy shell.
 
 All of your homing weapons turn in wide arcs, so aiming still matters: a shell turns in a radius of about 400 units, a salvo missile about 260 and a fractal piece about 290. A target inside that circle, or off to the side of your shot, is missed. Enemy missiles are tighter, about 200.
 

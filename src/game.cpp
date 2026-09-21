@@ -142,8 +142,8 @@ void Game::updateBullets(float dt) {
             b.pos.y += (double)b.vel.y * sdt;
             if (bulletHitsTargets(b) || (versus && bulletHitsPlayers(b))) { spent = true; break; }
             if (b.gen >= 0) {                         // a fractal shell divides after every so often
-                b.travel += stepLen;
-                if (b.gen < rules::FRACTAL_SPLITS && b.travel >= b.splitEvery) { splitFractal(b); spent = true; break; }
+                b.flown += sdt;
+                if (b.gen < rules::FRACTAL_SPLITS && b.flown >= b.splitEvery) { splitFractal(b); spent = true; break; }
             }
             const int hit = world.solidAt(b.pos);
             if (hit < 0) continue;
