@@ -351,10 +351,15 @@ void World::loadChunk(i64 cx, i64 cy) {
             // reserve room for the real bounding circle, not the requested one.
             if (!spaceFree(p, radius * 1.42, 1.10)) continue;
             if (zoneBlocks(p, radius * 1.42)) continue;      // keep the goal clear
-            const int slot = spawn(p, radius, rng.u32());
+            const uint32_t rockSeed = rng.u32();
+            const int slot = spawn(p, radius, rockSeed);
             if (slot >= 0) {
-                bodies[slot].vel    = rng.disc() * 6.0f;
-                bodies[slot].angVel = rng.sym(0.13f);
+                bodies[slot].vel = rng.disc() * 6.0f;
+                (void)rng.f();                                // (this used to be the spin: the draw stays, so a seed still lays out the same rocks)
+                // Every rock is born spinning, at a speed drawn from a normal distribution. It has
+                // its own generator, seeded by the rock, so nothing else about the world moves.
+                Rng spin(hashCombine((uint64_t)rockSeed, 0x51D1ull));
+                bodies[slot].angVel = clampf(spin.normal() * cfg::SPIN_SIGMA, -3.0f * cfg::SPIN_SIGMA, 3.0f * cfg::SPIN_SIGMA);
             }
             break;
         }
@@ -589,7 +594,7 @@ void World::step(float dt, dv2 focus) {
         // A whisper of damping. Not physical in vacuum, but it bleeds off the
         // energy the positional contact solver injects and keeps the field calm.
         b.vel    *= std::exp(-0.05f * dt);
-        b.angVel *= std::exp(-0.09f * dt);
+        b.angVel *= std::exp(-cfg::SPIN_DAMPING * dt);
         b.refreshTrig();
         if (b.simulated) ++simCount;
     }

@@ -91,6 +91,8 @@ struct Rng {
     int   i(int a, int b)          { return a + (int)(u32() % (uint32_t)(b - a + 1)); }
     float angle()                  { return f() * TAUF; }
     v2    dir()                    { return fromAngle(angle()); }
+    // Normally distributed, mean 0 and standard deviation 1 (Box-Muller; two draws).
+    float normal()                 { const float u = std::max(f(), 1e-7f), v = f(); return std::sqrt(-2.0f * std::log(u)) * std::cos(TAUF * v); }
     // Point in unit disc, uniform.
     v2    disc()                   { return dir() * std::sqrt(f()); }
 };

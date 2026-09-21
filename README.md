@@ -165,7 +165,6 @@ under the big things.
 Sounds are placed in the world: louder the nearer they are to the spaceman, and
 panned by where they are on screen. **`M` turns sound off and on.**
 
-
 ### Versus and multiplayer
 
 A separate mode where the players shoot each other. There are no levels, enemies,
@@ -363,6 +362,7 @@ $line
     -walktest        A and D move the right way on screen
     -jumptest        the jump leaves toward the cursor, never into the ground; tank and gravity values
     -rangetest       the homing weapons blow up when their time is up; refill rate and shot gravity
+    -spintest        rocks are born spinning, normally distributed, and keep turning
     -bullettest      how far gravity bends each shot
     -showcase        stage each feature and save screenshots (use -shotfile)
 
@@ -458,7 +458,6 @@ The HUD uses a built-in stroke font (`GLYPHS` in `render.cpp`) so the text is
 vectors like everything else - no texture atlas, no font file.
 
 ---
-
 
 ---
 
@@ -583,8 +582,12 @@ A few notes on what interacts with what:
   attraction would be easy to add but would collapse the field over time.
 * Asteroid-asteroid contact samples one outline against the other's field, which
   is accurate but can miss a contact if one rock is far coarser than the other.
-* A very light velocity and spin damping is applied to rocks. It is not physical
-  in vacuum; it bleeds off the energy the positional contact solver injects.
+* A very light velocity damping is applied to rocks, and a lighter one to their spin (3% a second, a half-
+  life of about 23 s). It is not physical in vacuum; it bleeds off the energy the positional contact
+  solver injects. **Every rock is born spinning**: the speed is drawn from a normal distribution
+  (mean none, standard deviation 0.3 rad/s, cut off at three), so about two thirds turn slower than
+  0.3 rad/s and a few turn at nearly one, half each way. A big rock's rim then moves at 50 units a
+  second or more, and you are carried with the ground you stand on. `-spintest` checks the bell curve.
 * The force field pushes the rocks around it but not the one you are standing on.
 * The pilot bot ignores enemies, so its damage figures say how dangerous a level
   is to someone who does not fight back, not how it plays for a person.

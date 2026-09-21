@@ -167,7 +167,7 @@ int main(int argc, char** argv) {
     bool persistTest = false;
     bool rocketTest = false;
     bool bulletTest = false;
-    bool walkTest = false, jumpTest = false, rangeTest = false;
+    bool walkTest = false, jumpTest = false, rangeTest = false, spinTest = false;
     bool sandboxMode = false, levelTest = false, nukeTest = false, enemyTest = false;
     bool peaceful = false, allItemsArg = false;
     bool showcase = false, shipGallery = false;
@@ -222,6 +222,7 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "-walktest"))             walkTest = true;
         else if (!strcmp(argv[i], "-jumptest"))             jumpTest = true;
         else if (!strcmp(argv[i], "-rangetest"))            rangeTest = true;
+        else if (!strcmp(argv[i], "-spintest"))             spinTest = true;
         else if (!strcmp(argv[i], "-bullettest"))           bulletTest = true;
         else if (!strcmp(argv[i], "-rockettest"))           rocketTest = true;
         else if (!strcmp(argv[i], "-persisttest"))          persistTest = true;
@@ -301,7 +302,7 @@ int main(int argc, char** argv) {
     static Game game;
     game.debugTrace = dbgTrace;
     // The older unit tests measure the plain toy, without enemies shooting at it.
-    game.sandbox    = sandboxMode || walkTest || jumpTest || bulletTest || rocketTest || persistTest;
+    game.sandbox    = sandboxMode || walkTest || jumpTest || spinTest || bulletTest || rocketTest || persistTest;
     // Benchmarks and the scripted demo run must not die or time out.
     game.invincible = selftest;
     game.allItems = allItemsArg;                     // -allitems: try every weapon from the start
@@ -3531,6 +3532,7 @@ int main(int argc, char** argv) {
 
         // ---- a turret bolted to a rock shoots at you and fires missiles
         const int big = biggestRock();
+        game.world.bodies[big].angVel = 0.0f;  game.world.bodies[big].vel = v2(0, 0);   // the turret test is about the turret: a rock spinning away would carry it out of range
         const Body& rock = game.world.bodies[big];
         dv2 sp;  v2 sn;  int sb = -1;
         bool found = false;
@@ -3874,6 +3876,68 @@ int main(int argc, char** argv) {
         return 0;
     }
 
+    if (spinTest) {
+        printf("spintest:\n");
+        int failures = 0;
+        auto check = [&](bool ok, const char* what) {
+            printf("  %-78s %s\n", what, ok ? "ok" : "FAIL");
+            if (!ok) ++failures;
+        };
+        // Right after the world is made: every rock's spin, before anything has knocked it about.
+        std::vector<float> w;
+        for (int s : game.world.active) {
+            const Body& b = game.world.bodies[s];
+            if (b.alive) w.push_back(b.angVel);
+        }
+        const size_t n = w.size();
+        double mean = 0, sq = 0;
+        for (float x : w) { mean += x; sq += (double)x * x; }
+        mean /= std::max<size_t>(1, n);
+        const double sd = std::sqrt(sq / std::max<size_t>(1, n) - mean * mean);
+        size_t in1 = 0, in2 = 0, pos = 0, still = 0;
+        for (float x : w) {
+            const double z = std::fabs(x - mean) / std::max(1e-9, sd);
+            if (z < 1.0) ++in1;
+            if (z < 2.0) ++in2;
+            if (x > 0.0f) ++pos;
+            if (std::fabs(x) < 0.02f) ++still;
+        }
+        printf("      %d rocks: mean spin %+.3f rad/s, spread %.3f, %.0f%% within one sigma, %.0f%% within two, %.0f%% spinning the positive way\n",
+               (int)n, mean, sd, 100.0 * in1 / std::max<size_t>(1, n), 100.0 * in2 / std::max<size_t>(1, n), 100.0 * pos / std::max<size_t>(1, n));
+        check(n > 200, "there are plenty of rocks to look at");
+        check(std::fabs(mean) < 0.05, "the spins are centred on none");
+        check(sd > 0.25 && sd < 0.35, "with a spread of about 0.3 rad/s");
+        check(in1 > 0.60 * n && in1 < 0.76 * n, "about 68% of them within one standard deviation");
+        check(in2 > 0.91 * n && in2 < 0.99 * n, "and about 95% within two: a bell curve, not a flat spread");
+        check(pos > 0.42 * n && pos < 0.58 * n, "half turn each way");
+        check(still < 0.15 * n, "and hardly any sit still");
+        // The Rng itself.
+        Rng r(12345);
+        double m2 = 0, s2 = 0;
+        const int N = 20000;
+        for (int i = 0; i < N; ++i) { const double x = r.normal(); m2 += x; s2 += x * x; }
+        m2 /= N;  s2 = std::sqrt(s2 / N - m2 * m2);
+        printf("      20000 draws of Rng::normal(): mean %+.3f, deviation %.3f\n", m2, s2);
+        check(std::fabs(m2) < 0.03 && std::fabs(s2 - 1.0) < 0.03, "Rng::normal() has mean 0 and deviation 1");
+
+        // They keep turning: ten seconds on, most of the spin is still there.
+        const Player keep = game.pl;
+        double before = 0, after = 0;
+        for (int s : game.world.active) if (game.world.bodies[s].alive) before += std::fabs(game.world.bodies[s].angVel);
+        const int alive0 = (int)game.world.active.size();
+        for (int i = 0; i < 600; ++i) game.world.step(1.0f / 60.0f, game.pl.pos);
+        int counted = 0;
+        for (int s : game.world.active) if (game.world.bodies[s].alive) { after += std::fabs(game.world.bodies[s].angVel); ++counted; }
+        (void)keep;  (void)alive0;
+        const double ratio = (after / std::max(1, counted)) / (before / std::max<size_t>(1, n));
+        printf("      ten seconds later the average spin is %.0f%% of what it was\n", ratio * 100.0);
+        check(ratio > 0.6, "the rocks are still turning ten seconds on (the damping is gentle)");
+        printf("spintest: %s\n", failures == 0 ? "PASS" : "FAIL");
+        fflush(stdout);
+        renderer.shutdown();
+        return 0;
+    }
+
     if (jumpTest) {
         // Stand on top of the biggest rock and jump with the cursor in several places:
         // the jump should leave toward the cursor, never into the ground, and a cursor
@@ -3906,10 +3970,14 @@ int main(int argc, char** argv) {
                                { "cursor 60 degrees to the left", -60.0f }, { "cursor level with the ground, right", 90.0f },
                                { "cursor level with the ground, left", -90.0f }, { "cursor straight down", 180.0f } };
         for (const Case& cs : cases) {
+            // Rocks turn now, so find the top of it again each time.
+            p = dv2(rock.pos.x + n0.x * (rock.radius + 40.0), rock.pos.y + n0.y * (rock.radius + 40.0));
+            for (int i = 0; i < 400 && game.world.solidAt(p) < 0; ++i) p += n0 * -1.0f;
+            p += n0 * 9.0f;
             game.pl.pos = p;  game.pl.vel = rock.vel;  game.pl.up = n0;
             game.pl.grounded = false;  game.pl.jumpCd = 0.0f;
             Input idle;
-            for (int f = 0; f < 12; ++f) {
+            for (int f = 0; f < 45; ++f) {
                 game.cam.pos = game.pl.pos;  game.cam.angle = 0.0f;
                 game.update(renderer, idle, dt);
             }
@@ -3940,10 +4008,13 @@ int main(int argc, char** argv) {
         }
         // How much can the rocket do from the ground? (reported, not judged)
         for (int withJump = 0; withJump < 2; ++withJump) {
+            p = dv2(rock.pos.x + n0.x * (rock.radius + 40.0), rock.pos.y + n0.y * (rock.radius + 40.0));
+            for (int i = 0; i < 400 && game.world.solidAt(p) < 0; ++i) p += n0 * -1.0f;
+            p += n0 * 9.0f;
             game.pl.pos = p;  game.pl.vel = rock.vel;  game.pl.up = n0;  game.pl.grounded = false;  game.pl.jumpCd = 0.0f;
             game.pl.fuel = tune::FUEL_MAX;  game.pl.fuelLocked = false;
             Input idle;
-            for (int f = 0; f < 12; ++f) { game.cam.pos = game.pl.pos;  game.cam.angle = 0.0f;  game.update(renderer, idle, dt); }
+            for (int f = 0; f < 45; ++f) { game.cam.pos = game.pl.pos;  game.cam.angle = 0.0f;  game.update(renderer, idle, dt); }
             const dv2 from = game.pl.pos;
             float top = 0.0f;
             for (int f = 0; f < 240; ++f) {
