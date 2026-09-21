@@ -33,7 +33,7 @@ void Game::updateAudio(float dt) {
 
     // ---- sounds that last
     const bool alive = !playerGone();
-    audio::loop(Sustain::Thruster, (live && alive && pl.thrusting) ? 1.0f : 0.0f, 0.88f + 0.28f * (pl.fuel / 100.0f));
+    audio::loop(Sustain::Thruster, (live && alive && pl.thrusting) ? 1.0f : 0.0f, 0.88f + 0.28f * (pl.fuel / tune::FUEL_MAX));
     audio::loop(Sustain::FieldHum, (live && alive && pl.fieldOn) ? 0.5f + 0.4f * (pl.field / 100.0f) : 0.0f,
                 0.88f + 0.22f * (pl.field / 100.0f));
     audio::loop(Sustain::ShieldHum, (live && alive && pl.shieldUp) ? 0.8f : 0.0f, 1.0f + 0.2f * pl.shieldFlash);

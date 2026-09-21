@@ -90,7 +90,7 @@ void Game::respawnPlayer(Player& p) {
 
     p.dead = false;
     p.health = 100.0f;
-    p.fuel = 100.0f;  p.fuelLocked = false;
+    p.fuel = tune::FUEL_MAX;  p.fuelLocked = false;
     p.protect = rules::SPAWN_PROTECT;
     p.respawnIn = 0.0f;
     p.grounded = false;  p.ground = BodyRef();
@@ -280,8 +280,8 @@ void Game::botThink(Peer& b, float dt) {
     if (dist > 250.0f && dist < 1100.0f && me.heavyCd <= 0.0f && vsRng.f() < dt * 0.5f && clearLine(me.pos, target->pos))
         ++c.heavySeq;
 
-    // Getting about. Walking is off, so the only way off a rock is to jump along its
-    // surface normal, and the only way to steer is the rocket, which pushes toward
+    // Getting about. Walking is off, so the only way off a rock is to jump toward
+    // the cursor (or along the surface, if that points into it), and the only way to steer is the rocket, which pushes toward
     // the aim. So: when distant away, jump the moment the way up is at all toward the
     // target (or, failing that, after a wait), then fly at them; when close, stay put
     // and shoot, hopping now and then to be harder to hit.

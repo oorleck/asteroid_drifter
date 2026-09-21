@@ -157,7 +157,7 @@ void Game::startLevel(int number, bool retry) {
 
     // A breather between levels.
     pl.health = std::min(100.0f, pl.health + rules::LEVEL_HEAL);
-    pl.fuel = 100.0f;  pl.fuelLocked = false;
+    pl.fuel = tune::FUEL_MAX;  pl.fuelLocked = false;
     pl.field = 100.0f;  pl.fieldLocked = false;
     state = State::Playing;
     stateTime = 0;

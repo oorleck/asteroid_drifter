@@ -297,7 +297,7 @@ void Game::stepPlayer(Player& p, const PlayerCmd& c, float dt) {
             spawnSparks(dv2(p.pos.x - aimDir.x * 10, p.pos.y - aimDir.y * 10),
                         p.vel - aimDir * 260.0f, 2, 90.0f, C_FLAME, 0.30f);
     } else {
-        p.fuel = std::min(100.0f, p.fuel + tune::FUEL_REGEN * dt);
+        p.fuel = std::min(tune::FUEL_MAX, p.fuel + tune::FUEL_REGEN * dt);
     }
     p.thrustGlow = approach(p.thrustGlow, 0.0f, 9.0f, dt);
     p.hurtGlow   = approach(p.hurtGlow, 0.0f, 3.0f, dt);
@@ -385,20 +385,30 @@ void Game::stepPlayer(Player& p, const PlayerCmd& c, float dt) {
         Body* gb = world.get(p.ground);
         const v2 surf = gb ? gb->velAt(tov2(p.pos - gb->pos)) : v2(0, 0);
         v2 rel = p.vel - surf;
-        rel += p.up * tune::JUMP_SPEED;
+        // The jump goes toward the cursor. It cannot go into the ground, so a cursor
+        // below (or almost level with) the surface gives a low leap along it instead.
+        v2 jd = aimDir;
+        const float lift = dot(jd, p.up);
+        if (lift < tune::JUMP_MIN_LIFT) {
+            const v2 along = jd - p.up * lift;
+            const float al = len(along);
+            const v2 side = al > 1e-3f ? along / al : right * (p.facing >= 0.0f ? 1.0f : -1.0f);
+            jd = side * std::sqrt(1.0f - tune::JUMP_MIN_LIFT * tune::JUMP_MIN_LIFT) + p.up * tune::JUMP_MIN_LIFT;
+        }
+        rel += jd * tune::JUMP_SPEED;
         rel += right * (mv * 90.0f);
         p.vel = rel + surf;
         // Kick back against the rock. Big ones shrug it off; pebbles do not.
         if (gb) {
             const v2 rr = tov2(p.pos - gb->pos);
-            const v2 P  = p.up * (-70.0f * tune::JUMP_SPEED);
+            const v2 P  = jd * (-70.0f * tune::JUMP_SPEED);
             gb->vel    += P * gb->invMass;
             gb->angVel += cross(rr, P) * gb->invInertia;
         }
         p.grounded = false;
         p.coyote = 0;
         p.jumpCd = 0.18f;
-        spawnSparks(p.pos, p.up * -70.0f, 7, 90.0f, Col(0.8f, 0.9f, 1.0f), 0.3f);
+        spawnSparks(p.pos, jd * -70.0f, 7, 90.0f, Col(0.8f, 0.9f, 1.0f), 0.3f);
         sfx(Sfx::Jump, p.pos, self ? 0.8f : 0.55f, sfxRng.range(0.95f, 1.06f));
     }
 
@@ -736,8 +746,8 @@ void Game::drawHud(Renderer& r) {
 
     const float bw = 200.0f * s, bh = 13.0f * s, gap = 30.0f * s;
     float y = m + 12.0f * s;
-    bar(m, y, bw, bh, pl.fuel / 100.0f, Col(1.0f, 0.65f, 0.25f),
-        pl.fuelLocked ? "ROCKET  RECHARGING" : "ROCKET FUEL", pl.fuelLocked || pl.fuel < 20.0f);
+    bar(m, y, bw, bh, pl.fuel / tune::FUEL_MAX, Col(1.0f, 0.65f, 0.25f),
+        pl.fuelLocked ? "ROCKET  RECHARGING" : "ROCKET FUEL", pl.fuelLocked || pl.fuel < 0.2f * tune::FUEL_MAX);
     y += gap;
     // (The suit has moved to the bottom centre of the screen, and is much bigger.)
     // Everything below only appears once it has been bought.

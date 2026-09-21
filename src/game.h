@@ -40,7 +40,9 @@ namespace tune {
     static const float WALK_ACCEL  = 1500.0f;
     static const float AIR_ACCEL   = 0.0f;
     static const float JUMP_SPEED  = 260.0f;
+    static const float JUMP_MIN_LIFT = 0.17f;  // a jump leaves the ground at least this far (sine, about 10 degrees) off the surface
     static const float THRUST      = 750.0f;
+    static const float FUEL_MAX    = 80.0f;    // the tank: 20% smaller than the 100 it was; burn and regen are unchanged, so the duty cycle is too
     static const float FUEL_BURN   = 25.0f;
     static const float FUEL_REGEN  = 22.0f;
     static const float FUEL_RESTART = 12.0f;   // after running dry, fuel needed before the rocket relights
@@ -122,7 +124,7 @@ struct Player {
     bool  grounded = false;
     BodyRef ground;
 
-    float fuel = 100;
+    float fuel = tune::FUEL_MAX;
     float fireCd = 0, heavyCd = 0, salvoCd = 0, nukeCd = 0, jumpCd = 0, coyote = 0;
     float legPhase = 0, thrustGlow = 0, hurtGlow = 0;
     float health = 100;

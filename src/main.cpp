@@ -167,7 +167,7 @@ int main(int argc, char** argv) {
     bool persistTest = false;
     bool rocketTest = false;
     bool bulletTest = false;
-    bool walkTest = false;
+    bool walkTest = false, jumpTest = false;
     bool sandboxMode = false, levelTest = false, nukeTest = false, enemyTest = false;
     bool peaceful = false, allItemsArg = false;
     bool showcase = false, shipGallery = false;
@@ -220,6 +220,7 @@ int main(int argc, char** argv) {
         else if (!strcmp(argv[i], "-nuketest"))             nukeTest = true;
         else if (!strcmp(argv[i], "-enemytest"))            enemyTest = true;
         else if (!strcmp(argv[i], "-walktest"))             walkTest = true;
+        else if (!strcmp(argv[i], "-jumptest"))             jumpTest = true;
         else if (!strcmp(argv[i], "-bullettest"))           bulletTest = true;
         else if (!strcmp(argv[i], "-rockettest"))           rocketTest = true;
         else if (!strcmp(argv[i], "-persisttest"))          persistTest = true;
@@ -299,7 +300,7 @@ int main(int argc, char** argv) {
     static Game game;
     game.debugTrace = dbgTrace;
     // The older unit tests measure the plain toy, without enemies shooting at it.
-    game.sandbox    = sandboxMode || walkTest || bulletTest || rocketTest || persistTest;
+    game.sandbox    = sandboxMode || walkTest || jumpTest || bulletTest || rocketTest || persistTest;
     // Benchmarks and the scripted demo run must not die or time out.
     game.invincible = selftest;
     game.allItems = allItemsArg;                     // -allitems: try every weapon from the start
@@ -828,7 +829,7 @@ int main(int argc, char** argv) {
             game.pl.fuel = 0.0f;  game.pl.fuelLocked = true;
             run(in, 3);
             check(plays(Sfx::FuelEmpty) >= 1, "an empty tank clicks");
-            game.pl.fuel = 100.0f;  game.pl.fuelLocked = false;
+            game.pl.fuel = tune::FUEL_MAX;  game.pl.fuelLocked = false;
             game.floating = false;
         }
         {
@@ -1711,20 +1712,24 @@ int main(int argc, char** argv) {
 
         // ---- a shell
         {
-            stage(500.0);
-            Player& b = game.peers[0].body;
-            game.pl.protect = 0.0f;
-            for (int i = 0; i < 90 && !game.pl.dead && game.pl.health == 100.0f; ++i) {
-                aimBotAtPlayer();
-                if (i == 0) ++game.peers[0].cmd.heavySeq;
-                game.update(renderer, idle, dt);
+            // Rock a long way off bends a heavy shell's path, so a straight shot can miss.
+            // This test is about the damage, not the aim: try a few corrections and take the first that lands.
+            float lost = 0.0f;
+            for (int k = 0; k < 9 && lost <= 0.0f; ++k) {
+                const float offset = ((k + 1) / 2) * 0.03f * ((k & 1) ? -1.0f : 1.0f);
+                stage(500.0);
+                game.pl.protect = 0.0f;
+                for (int i = 0; i < 90 && !game.pl.dead && game.pl.health == 100.0f; ++i) {
+                    aimBotAtPlayer();
+                    game.peers[0].cmd.aim += offset;
+                    if (i == 0) game.peers[0].cmd.heavySeq = (uint8_t)(game.peers[0].body.seenHeavy + 1);
+                    game.update(renderer, idle, dt);
+                }
+                lost = 100.0f - game.pl.health;
             }
-            const float lost = 100.0f - game.pl.health;
             printf("      one shell at 500 units: %.0f suit\n", lost);
             check(lost >= rules::VS_HEAVY_DAMAGE * 0.3f && lost <= rules::VS_HEAVY_DAMAGE + 0.1f, "a shell does its damage, less if it lands beside you");
-            (void)b;
         }
-
         // ---- a blast credits whoever set it off
         {
             stage(500.0);
@@ -3160,7 +3165,7 @@ int main(int argc, char** argv) {
             const dv2 C(24000.0, 24000.0);
             openSpot(C);
             game.pl.hasShield = false;
-            game.pl.fuel = 100.0f;
+            game.pl.fuel = tune::FUEL_MAX;
             Input rm;
             rm.mouse[1] = true;
             aimAt(rm, dv2(C.x + 500.0, C.y));
@@ -3177,7 +3182,7 @@ int main(int argc, char** argv) {
             game.pl.hasShield = true;  game.pl.shield = rules::SHIELD_CAPACITY;
             game.update(renderer, ralt, dt);
             check(!game.pl.shieldUp, "and Right Alt never raises it: only Left Alt does");
-            game.pl.fuel = 100.0f;  game.pl.fuelLocked = false;
+            game.pl.fuel = tune::FUEL_MAX;  game.pl.fuelLocked = false;
             game.update(renderer, alt, dt);
             check(game.pl.shieldUp && !game.pl.thrusting, "once owned, holding Left Alt raises the shield");
             game.update(renderer, rm, dt);
@@ -3765,6 +3770,75 @@ int main(int argc, char** argv) {
         } else {
             printf("walktest: %s\n", failures == 0 ? "PASS" : "FAIL");
         }
+        fflush(stdout);
+        renderer.shutdown();
+        return 0;
+    }
+
+    if (jumpTest) {
+        // Stand on top of the biggest rock and jump with the cursor in several places:
+        // the jump should leave toward the cursor, never into the ground, and a cursor
+        // below or along the surface should give a low leap along it.
+        const float dt = 1.0f / 60.0f;
+        int best = -1;
+        for (int s : game.world.active)
+            if (best < 0 || game.world.bodies[s].radius > game.world.bodies[best].radius) best = s;
+        int failures = 0;
+        auto check = [&](bool ok, const char* what) {
+            printf("  %-78s %s\n", what, ok ? "ok" : "FAIL");
+            if (!ok) ++failures;
+        };
+        game.povCamera = false;
+        game.floating = false;
+        game.pl.hasFractal = false;
+        const Body& rock = game.world.bodies[best];
+        const v2 n0(0.0f, 1.0f);
+        dv2 p = dv2(rock.pos.x + n0.x * (rock.radius + 40.0), rock.pos.y + n0.y * (rock.radius + 40.0));
+        for (int i = 0; i < 400 && game.world.solidAt(p) < 0; ++i) p += n0 * -1.0f;
+        p += n0 * 9.0f;
+
+        printf("jumptest: the tank holds %.0f, was 100; gravity constant %.0f, was 100\n", tune::FUEL_MAX, cfg::GRAV_CONST);
+        check(tune::FUEL_MAX == 80.0f && game.pl.fuel == tune::FUEL_MAX, "the fuel tank is 20% smaller and starts full");
+        check(cfg::GRAV_CONST == 150.0f, "gravity is 50% stronger");
+
+        struct Case { const char* name; float degFromUp; };            // clockwise from the surface normal
+        const Case cases[] = { { "cursor straight up", 0.0f }, { "cursor 40 degrees to the right", 40.0f },
+                               { "cursor 60 degrees to the left", -60.0f }, { "cursor level with the ground, right", 90.0f },
+                               { "cursor level with the ground, left", -90.0f }, { "cursor straight down", 180.0f } };
+        for (const Case& cs : cases) {
+            game.pl.pos = p;  game.pl.vel = rock.vel;  game.pl.up = n0;
+            game.pl.grounded = false;  game.pl.jumpCd = 0.0f;
+            Input idle;
+            for (int f = 0; f < 12; ++f) {
+                game.cam.pos = game.pl.pos;  game.cam.angle = 0.0f;
+                game.update(renderer, idle, dt);
+            }
+            const v2 up = game.pl.up;
+            const bool grounded = game.pl.grounded;
+            const v2 right(up.y, -up.x);
+            const float a = cs.degFromUp * PIF / 180.0f;
+            const v2 want = up * std::cos(a) + right * std::sin(a);        // where the cursor is, from the player
+            Input in;
+            in.pressed[VK_SPACE] = true;
+            game.cam.pos = game.pl.pos;  game.cam.angle = 0.0f;
+            aimAt(in, game.pl.pos + dv2(want.x * 300.0, want.y * 300.0));
+            game.update(renderer, in, dt);
+            Body* gb = game.world.get(game.pl.ground);
+            const v2 surf = gb ? gb->velAt(tov2(game.pl.pos - gb->pos)) : v2(0, 0);
+            const v2 rel = game.pl.vel - surf;
+            const float sp = len(rel);
+            const v2 dir = sp > 1.0f ? rel / sp : v2(0, 0);
+            const float lift = dot(dir, up);
+            const float agree = dot(dir, want);
+            printf("      %-36s speed %5.0f, lift %+.2f, agreement with the cursor %+.2f\n", cs.name, sp, lift, agree);
+            check(grounded, "it starts on the ground");
+            check(std::fabs(sp - tune::JUMP_SPEED) < 25.0f, "and leaves at the jump speed");
+            check(lift > 0.10f, "the jump never goes into the rock");
+            if (std::cos(a) >= 0.2f) check(agree > 0.97f, "and it goes toward the cursor");
+            else if (cs.degFromUp != 180.0f)
+                check(dot(dir, right) * std::sin(a) > 0.9f, "a cursor at or below the horizon gives a low leap toward that side");
+        }
+        printf("jumptest: %s\n", failures == 0 ? "PASS" : "FAIL");
         fflush(stdout);
         renderer.shutdown();
         return 0;

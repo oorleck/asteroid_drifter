@@ -187,7 +187,7 @@ the rocket.
 * **Bots** are sparring partners, not champions. They lead their shots but wobble,
   fire in bursts, jump about, and fly at you with the rocket; about 30% of their
   rounds land. Walking is off (see *Tuning*), so a bot can only leave its rock by
-  jumping along the surface normal, which took some teaching.
+  jumping toward their target, which took some teaching.
 * **The screen.** A scoreboard at the top, a kill feed down the right, a name tag
   and health bar over every opponent in view, an arrow to each one that is not,
   and a connection line (`CONNECTED   PING 28 MS   7 KB/S`) at the top left.
@@ -282,7 +282,7 @@ onward). Nothing to install or download.
 | Input | Action |
 | --- | --- |
 | `A` / `D` or arrows | Walk along the surface, or steer in flight (see *Tuning*: both speeds are currently 0) |
-| `W` / `Up` / `Space` | Jump, and it kicks the rock back |
+| `W` / `Up` / `Space` | Jump **toward the cursor**, and it kicks the rock back. It never goes into the ground: a cursor below or level with the surface gives a low leap along it |
 | Mouse | Aim |
 | Left mouse | Rapid fire. Bullets tunnel, so hold it to drill through |
 | Right mouse / `Shift` | Rocket: thrust toward the cursor, burns fuel |
@@ -303,7 +303,7 @@ onward). Nothing to install or download.
 | `F11` / `F12` | Fullscreen / save a PNG screenshot |
 | `Esc` | Quit |
 
-The rocket burns fuel that refills while you are not using it. The force field
+The rocket burns fuel from a small tank (80 units, burning 25 a second) that refills while you are not using it. The force field
 runs off an energy bar: it switches itself off when that empties and will not
 relight until it has recovered a little.
 
@@ -361,6 +361,7 @@ $line
     -persisttest     damage survives chunks unloading and reloading
     -rockettest      the rocket obeys its fuel budget
     -walktest        A and D move the right way on screen
+    -jumptest        the jump leaves toward the cursor, never into the ground; tank and gravity values
     -bullettest      how far gravity bends each shot
     -showcase        stage each feature and save screenshots (use -shotfile)
 
@@ -556,7 +557,7 @@ A few notes on what interacts with what:
   `-rockettest` checks that thrust never exceeds that budget.
 * Gravity is `G * m * r / (r^2 + soft)^1.5` with softening proportional to the
   rock's radius. Since a rock's mass scales with its area, **surface gravity
-  works out roughly the same on every rock** (about 250 u/s^2).
+  works out roughly the same on every rock** (about 375 u/s^2: `GRAV_CONST` is 150, it was 100).
 * Bullet **gravity** (`BULLET_GRAV`, `HEAVY_GRAV` in `src/game.h`) is a
   multiplier on the pull of nearby rock. Real-strength gravity bends a 1650 u/s
   round by about 4 units over 330 units of flight, which is invisible, so bullets
