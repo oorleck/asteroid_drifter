@@ -441,7 +441,7 @@ void Game::splitFractal(const Bullet& parent) {
     }
     // A small flash and a dull crack where it divided; the smaller pieces crack softer.
     const float small = std::sqrt(parent.power);
-    ring(parent.pos, 22.0f + 36.0f * small, 0.32f, parent.col, 1.0f);
+    ring(parent.pos, 13.0f + 21.0f * small, 0.28f, parent.col, 0.4f);     // small and thin: a flick, not a blast
     spawnSparks(parent.pos, parent.vel * 0.3f, 6, 110.0f, parent.col, 0.25f);
     sfx(Sfx::FractalSplit, parent.pos, 0.55f + 0.45f * small, sfxRng.range(0.93f, 1.03f), 1800.0f);
 }
