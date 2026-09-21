@@ -2841,7 +2841,7 @@ int main(int argc, char** argv) {
                    ang * 57.2958f, ang * 0.5f * 57.2958f, sp, parentSpeed);
             check(n == 2 && std::fabs(ang - 2.0f * rules::FRACTAL_SPREAD) < 0.06f, "the two pieces leave the parent's line by the (narrower) spread angle");
             check(std::fabs(rules::FRACTAL_SPREAD - 0.30f * 0.75f) < 1e-6f, "which is 25% smaller than the 0.30 radians it was");
-            check(n == 2 && parentSpeed > 0.0f && sp > parentSpeed * 1.05f && sp < parentSpeed * 1.11f, "and each piece is a bit faster than the parent was (about 8%)");
+            check(n == 2 && parentSpeed > 0.0f && sp > parentSpeed * 1.11f && sp < parentSpeed * 1.17f, "and each piece is faster than the parent was (about 14%)");
         }
 
         // ---- ammunition, cooldown, ownership

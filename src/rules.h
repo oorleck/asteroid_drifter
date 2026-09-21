@@ -139,7 +139,7 @@ namespace rules {
     static const float FRACTAL_CHILD      = 0.45f;    // a child's strength as a share of its parent's: 50% minus 10%
     static const int   FRACTAL_SPLITS     = 5;        // generations after the first
     static const float FRACTAL_SPREAD     = 0.225f;   // radians each child leaves the parent's line by (about 13 degrees; it was 0.30)
-    static const float FRACTAL_SPEEDUP    = 1.08f;    // each split, a piece gains this much speed: five splits, about 1.47 times the launch speed
+    static const float FRACTAL_SPEEDUP    = 1.14f;    // each split, a piece gains this much speed: five splits, about 1.9 times the launch speed
     static const float FRACTAL_TURN       = 1.95f;    // rad/s a piece can turn toward its target: a radius of about 290 units
     static const float FRACTAL_CAL        = 11.7f;    // the parent's hole in a rock
     static const float FRACTAL_MIN_CAL    = 2.6f;
