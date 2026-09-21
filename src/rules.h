@@ -43,7 +43,7 @@ namespace rules {
     static const float HEAVY_DAMAGE   = 55.0f;
     static const float HEAVY_SPLASH_R = 70.0f;
     static const float HEAVY_SPLASH   = 45.0f;
-    static const float HOMING_TURN    = 4.4f;     // rad/s a homing shell can turn
+    static const float HOMING_TURN    = 1.75f;    // rad/s a homing shell can turn: a turning radius of about 400 units (speed / rate), so it must be aimed
     static const float HOMING_RANGE   = 1300.0f;  // how far away it can pick a target
 
     // ---- enemies -----------------------------------------------------------
@@ -99,7 +99,7 @@ namespace rules {
     // ---- the multi-target missile salvo ---------------------------------------
     static const int   SALVO_COUNT    = 5;        // small missiles per shot
     static const float SALVO_SPEED    = 560.0f;
-    static const float SALVO_TURN     = 5.6f;
+    static const float SALVO_TURN     = 2.15f;    // rad/s: a turning radius of about 260 units
     static const float SALVO_DAMAGE   = 26.0f;
     static const float SALVO_BLAST    = 46.0f;
     static const float SALVO_CRATER   = 8.0f;
@@ -137,7 +137,7 @@ namespace rules {
     static const float FRACTAL_CHILD      = 0.45f;    // a child's strength as a share of its parent's: 50% minus 10%
     static const int   FRACTAL_SPLITS     = 5;        // generations after the first
     static const float FRACTAL_SPREAD     = 0.30f;    // radians each child leaves the parent's line by
-    static const float FRACTAL_TURN       = 5.0f;     // rad/s a piece can turn toward its target
+    static const float FRACTAL_TURN       = 1.95f;    // rad/s a piece can turn toward its target: a radius of about 290 units
     static const float FRACTAL_CAL        = 18.0f;    // the parent's hole in a rock
     static const float FRACTAL_MIN_CAL    = 4.0f;
     static const float FRACTAL_SPLIT_K    = 0.40f;    // it splits every this share of the distance to the cursor...

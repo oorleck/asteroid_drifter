@@ -102,7 +102,7 @@ freezes and the depot opens. Click a row, or press its number:
 
 | Item | Key | Price | What it does |
 | --- | --- | --- | --- |
-| **Homing shell** | `F` / middle mouse | 300 | The charge shot. A heavy shell that curves onto the nearest enemy in front of it. |
+| **Homing shell** | `F` / middle mouse | 300 | The charge shot. A heavy shell that curves onto the nearest enemy in front of it, but in a wide arc (a turning radius of about 400 units), so you have to aim it. |
 | **Missile salvo** | `G` | 450 (6 salvos), then 150 for 6 more | Five small missiles at once, each sent after a *different* target. With fewer than five targets they double up; incoming enemy missiles count as targets. |
 | **Nuke** | `N` | 400 for 3 | A slow grenade, dragged hard by gravity, with a 3.6 s fuse shown on the bomb itself. A huge blast: it vaporises rock, kills everything in its radius and hurts you if you are close. |
 | **Force field** | `X` | 500 | A bubble that shoves bullets, missiles, drones and rocks away. Costs energy while it is on. |
@@ -122,7 +122,9 @@ Purchases last for the run. Nukes can only be bought, never found.
 | 4 | 16 | 4% | 10 | 17 |
 | 5 (does not split) | 32 | 1.8% | 4 | 11 |
 
-Damage falls off toward the edge of a blast, and a piece that hits something bursts there without splitting further. In the test (`-fractaltest`) one shell did about **3.4 times the damage of a homing shell** to two drones 600 units apart, where the homing shell can only find one of them, and one shell cleared three ordinary drones.
+Damage falls off toward the edge of a blast, and a piece that hits something bursts there without splitting further. In the test (`-fractaltest`) one shell did about **3 times the damage of a homing shell** to two drones 600 units apart, where the homing shell can only find one of them, and one shell cleared three ordinary drones.
+
+All of your homing weapons turn in wide arcs, so aiming still matters: a shell turns in a radius of about 400 units, a salvo missile about 260 and a fractal piece about 290. A target inside that circle, or off to the side of your shot, is missed. Enemy missiles are tighter, about 200.
 
 ### Sound
 

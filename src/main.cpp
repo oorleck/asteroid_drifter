@@ -2735,8 +2735,8 @@ int main(int argc, char** argv) {
             // Ordinary drones die to it.
             {
                 game.bullets.clear();  game.enemies.clear();
-                Enemy a = plainDrone(dv2(C.x + 700.0, C.y + 300.0));
-                Enemy b = plainDrone(dv2(C.x + 700.0, C.y - 300.0));
+                Enemy a = plainDrone(dv2(C.x + 700.0, C.y + 200.0));
+                Enemy b = plainDrone(dv2(C.x + 700.0, C.y - 200.0));
                 Enemy c2 = plainDrone(dv2(C.x + 1000.0, C.y));
                 game.enemies.push_back(a);  game.enemies.push_back(b);  game.enemies.push_back(c2);
                 fireAt(700.0f, 0.0f);
