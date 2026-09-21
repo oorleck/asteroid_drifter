@@ -349,7 +349,7 @@ void Game::drawShield(Renderer& r) {
 // one heavy shell before it starts.
 static Col fractalColour(int gen) {
     const float t = clampf(gen / (float)rules::FRACTAL_SPLITS, 0.0f, 1.0f);
-    return mix(Col(0.90f, 0.35f, 1.35f), Col(0.25f, 1.20f, 1.05f), t);       // violet, going to cyan
+    return mix(Col(1.55f, 0.10f, 0.05f), Col(1.45f, 1.30f, 0.12f), t);          // blood red, going to yellow as it comes apart
 }
 
 float Game::fractalSplitDistance(float aimDist) {
@@ -439,11 +439,11 @@ void Game::splitFractal(const Bullet& parent) {
         c.col = fractalColour(c.gen);
         if ((int)bullets.size() < 900) bullets.push_back(c);
     }
-    // A small flash and a chirp where it divided; the sound climbs with the generation.
+    // A small flash and a dull crack where it divided; the smaller pieces crack softer.
     const float small = std::sqrt(parent.power);
     ring(parent.pos, 22.0f + 36.0f * small, 0.32f, parent.col, 1.0f);
     spawnSparks(parent.pos, parent.vel * 0.3f, 6, 110.0f, parent.col, 0.25f);
-    sfx(Sfx::FractalSplit, parent.pos, 0.5f + 0.5f * small, 1.0f + 0.10f * parent.gen, 1800.0f);
+    sfx(Sfx::FractalSplit, parent.pos, 0.55f + 0.45f * small, sfxRng.range(0.93f, 1.03f), 1800.0f);
 }
 
 // A heavy shell going off where it landed. Ordinary ones use the fixed numbers; a fractal

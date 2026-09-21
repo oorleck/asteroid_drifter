@@ -111,7 +111,7 @@ freezes and the depot opens. Click a row, or press its number:
 
 Purchases last for the run. Nukes can only be bought, never found.
 
-**The fractal shell** is worth understanding, because how you aim it changes what it does. *How far the cursor is from the spaceman decides how far the shell flies between splits*: the split is on a timer, set to the time the shell takes to fly as far as the cross is from you. With no gravity that means it splits exactly at the cross (and again at the same spacing after that), and gravity from rock bends it off that mark, since the timer does not care. Never less than 90 units of flight. Put the cross on a cluster and the first split happens over the cluster; point at something close and it divides almost at once into a cloud; point far away and it flies a long way as a single heavy shell, then divides late. Later splits come at the same time interval. Whenever it splits, the two pieces leave the parent's line by about 17 degrees and are each given a *different* target, the one on the left to the left-hand piece, so a volley spreads over a group rather than piling onto the nearest enemy.
+**The fractal shell** is worth understanding, because how you aim it changes what it does. It leaves blood red and turns towards yellow with every split, and the pieces are small and sharp. *How far the cursor is from the spaceman decides how far the shell flies between splits*: the split is on a timer, set to the time the shell takes to fly as far as the cross is from you. With no gravity that means it splits exactly at the cross (and again at the same spacing after that), and gravity from rock bends it off that mark, since the timer does not care. Never less than 90 units of flight. Put the cross on a cluster and the first split happens over the cluster; point at something close and it divides almost at once into a cloud; point far away and it flies a long way as a single heavy shell, then divides late. Later splits come at the same time interval. Whenever it splits, the two pieces leave the parent's line by about 17 degrees and are each given a *different* target, the one on the left to the left-hand piece, so a volley spreads over a group rather than piling onto the nearest enemy.
 
 | Generation | Pieces | Strength | Blast damage | Blast radius |
 | --- | --- | --- | --- | --- |
@@ -139,7 +139,8 @@ under the big things.
 * **Yours:** a zip for the rifle, a heavy thump with a shimmer for the homing
   shell, five staggered whooshes for the salvo, a thunk and a rising whine for the
   nuke, then a beep on every blink of its light (faster and higher as the fuse
-  runs down) and a long, deep boom.
+  runs down) and a long, deep boom. The fractal shell leaves with a low growl and a
+  heavy thump, and every split is a dull crack, with nothing bright about it.
 * **Theirs:** enemy bullets are lower and buzzier than yours, missiles launch
   with a rising whoosh, and a missile closing on you sets off a bi-bip warning
   that speeds up as it nears. Warship cannons whine up for 3/4 of a second before

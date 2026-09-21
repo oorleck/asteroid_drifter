@@ -679,14 +679,14 @@ void Game::render(Renderer& r) {
         const v2 p((float)(b.pos.x - cam.pos.x), (float)(b.pos.y - cam.pos.y));
         const v2 d = norm(b.vel);
         if (b.gen >= 0) {
-            // A fractal piece: a diamond that shrinks with every split, and a tail that shortens with it.
+            // A fractal piece: a sharp diamond, 35% smaller than it was, that shrinks with every split, and a tail that shortens with it.
             const float sz = std::sqrt(b.power);
-            const float rad = 2.4f + 5.0f * sz;
+            const float rad = (2.4f + 5.0f * sz) * 0.65f;
             const v2 n = perp(d);
-            r.line(p, p - d * (8.0f + 20.0f * sz), b.col, 2.0f + 0.8f * sz);
+            r.line(p, p - d * ((8.0f + 20.0f * sz) * 0.65f), b.col, 1.6f + 0.6f * sz);
             const v2 dia[4] = { p + d * (rad * 1.5f), p + n * rad, p - d * (rad * 1.5f), p - n * rad };
-            r.poly(dia, 4, true, b.col, 2.4f);
-            r.point(p, 2.0f + 3.0f * sz, b.col, 2.0f);
+            r.poly(dia, 4, true, b.col, 1.9f);
+            r.point(p, (2.0f + 3.0f * sz) * 0.65f, b.col, 2.0f);
             continue;
         }
         const float tail = b.heavy ? 16.0f : 26.0f;

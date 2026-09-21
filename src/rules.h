@@ -138,8 +138,8 @@ namespace rules {
     static const int   FRACTAL_SPLITS     = 5;        // generations after the first
     static const float FRACTAL_SPREAD     = 0.30f;    // radians each child leaves the parent's line by
     static const float FRACTAL_TURN       = 1.95f;    // rad/s a piece can turn toward its target: a radius of about 290 units
-    static const float FRACTAL_CAL        = 18.0f;    // the parent's hole in a rock
-    static const float FRACTAL_MIN_CAL    = 4.0f;
+    static const float FRACTAL_CAL        = 11.7f;    // the parent's hole in a rock
+    static const float FRACTAL_MIN_CAL    = 2.6f;
     static const float FRACTAL_SPLIT_K    = 1.00f;    // the split timer covers this share of the cursor distance at launch speed: 1.0 puts the first split on the cross (with no gravity)...
     static const float FRACTAL_SPLIT_MIN  = 90.0f;    // ...but never more often than this
     static const float FRACTAL_SPLIT_MAX  = 2500.0f;  // ...or more rarely (further than the cursor can be from you)

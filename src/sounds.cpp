@@ -168,34 +168,30 @@ Buf makeSalvo() {
     });
 }
 
-// A crystalline shell: a deep thump as it leaves, and a glassy shimmer that rises
-// after it, the sound of something about to come apart.
+// A menacing shell: a deep thump as it leaves, a snarling low growl and a dark rumble
+// under it. Nothing bright; it should sound like something that means it.
 Buf makeFractalFire() {
-    float ph = 0.0f;  Noise n(15);  LP lp;
-    Buf b = gen(0.75f, [&](float t) {
-        ph += TAU * (60.0f + 130.0f * std::exp(-t * 16.0f)) / SR;
-        const float thump = std::sin(ph) * std::exp(-t * 9.0f) + lp.run(n.w(), 900.0f) * std::exp(-t * 26.0f) * 0.5f;
-        float glass = 0.0f;
-        for (int k = 0; k < 3; ++k) {                                           // three partials, climbing a little
-            const float f = (1900.0f + 900.0f * k) * (1.0f + 0.45f * std::min(1.0f, t / 0.5f));
-            glass += std::sin(TAU * f * t) * (0.5f - 0.1f * k);
-        }
-        const float shimmer = 0.6f + 0.4f * std::sin(TAU * 21.0f * t);
-        return (thump * 1.1f + glass * shimmer * 0.30f * atk(t, 0.04f) * std::exp(-std::max(0.0f, t - 0.25f) * 6.0f)) * atk(t, 0.001f);
+    float ph = 0.0f, ph2 = 0.0f;  Noise n(15);  LP lp, lp2;
+    return gen(0.85f, [&](float t) {
+        ph  += TAU * (46.0f + 150.0f * std::exp(-t * 14.0f)) / SR;
+        ph2 += TAU * (92.0f + 240.0f * std::exp(-t * 10.0f)) / SR;
+        const float thump  = std::sin(ph) * std::exp(-t * 6.0f);
+        const float growl  = std::tanh(3.0f * std::sin(ph2)) * std::exp(-t * 5.0f) * (0.75f + 0.25f * std::sin(TAU * 31.0f * t)) * 0.42f;
+        const float rumble = lp.run(n.w(), 380.0f) * std::exp(-t * 4.0f) * 0.75f;
+        const float crack  = lp2.run(n.w(), 5000.0f) * std::exp(-t * 60.0f) * 0.5f;
+        return (thump * 1.2f + growl + rumble + crack) * atk(t, 0.001f);
     });
-    Noise s(16);  sparkle(b, s, 8, 0.05f, 0.5f, 3500.0f, 8500.0f, 0.06f, 40.0f);
-    return b;
 }
 
-// A quick glassy chirp: a shell dividing in two.
+// A shell coming apart: a short, dull crack with a low knock under it. No pitch, no chirp.
 Buf makeFractalSplit() {
-    return gen(0.2f, [](float t) {
-        auto blip = [](float u, float f0, float f1) {
-            if (u < 0.0f) return 0.0f;
-            const float f = f0 + (f1 - f0) * std::min(1.0f, u / 0.05f);
-            return std::sin(TAU * f * u) * std::exp(-u * 30.0f) * atk(u, 0.0008f);
-        };
-        return blip(t, 1500.0f, 2500.0f) + 0.8f * blip(t - 0.035f, 1900.0f, 3100.0f) + 0.05f * std::sin(TAU * 5200.0f * t) * std::exp(-t * 60.0f);
+    float ph = 0.0f;  Noise n(17);  LP lp, lp2;
+    return gen(0.26f, [&](float t) {
+        ph += TAU * (58.0f + 110.0f * std::exp(-t * 30.0f)) / SR;
+        const float knock = std::sin(ph) * std::exp(-t * 20.0f);
+        const float crack = lp.run(n.w(), 2400.0f) * std::exp(-t * 42.0f) * 0.8f;
+        const float rasp  = lp2.run(n.w(), 700.0f) * std::exp(-t * 14.0f) * 0.5f;
+        return (knock * 1.1f + crack + rasp) * atk(t, 0.0008f);
     });
 }
 

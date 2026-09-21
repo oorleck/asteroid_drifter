@@ -862,11 +862,11 @@ int main(int argc, char** argv) {
             run(in, 1);
             check(plays(Sfx::Salvo) >= 1, "the missile salvo");
             game.pl.hasFractal = true;  game.pl.fractalAmmo = 2;  game.pl.fractalCd = 0.0f;
-            Input fz;  fz.pressed['Z'] = true;  fz.mousePx = v2(gWidth * 0.8f, gHeight * 0.5f);
+            Input fz;  fz.pressed['Z'] = true;  fz.mousePx = v2(gWidth * 0.6f, gHeight * 0.5f);   // a close cross: it divides before it meets anything
             run(fz, 1);
             check(plays(Sfx::FractalFire) >= 1, "the fractal shell has its own launch sound");
-            run(idle, 150);                                  // the timer is the cursor distance at launch speed: allow a second or two
-            check(plays(Sfx::FractalSplit) >= 1, "and a chirp each time it divides");
+            run(idle, 90);                                   // the split comes after the time the cursor distance takes at launch speed
+            check(plays(Sfx::FractalSplit) >= 1, "and a crack each time it divides");
             game.pl.nukeAmmo = 1;  game.pl.nukeCd = 0.0f;
             Input n;  n.pressed['N'] = true;
             run(n, 1);

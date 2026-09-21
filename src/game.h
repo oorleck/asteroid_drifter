@@ -69,7 +69,7 @@ namespace pal {
     static const Col SALVO   (0.40f, 1.00f, 0.85f);
     static const Col FIELD   (0.35f, 0.85f, 1.00f);
     static const Col SHIELD  (1.00f, 0.80f, 0.30f);
-    static const Col FRACTAL (0.72f, 0.55f, 1.00f);
+    static const Col FRACTAL (1.25f, 0.20f, 0.10f);
 }
 
 struct Bullet {
