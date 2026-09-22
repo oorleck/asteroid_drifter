@@ -15,6 +15,7 @@
 #include <cstring>
 #include <algorithm>
 
+#ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -22,6 +23,11 @@
 #include <mmsystem.h>
 #ifdef _MSC_VER
 #pragma comment(lib, "winmm.lib")
+#endif
+#else
+#include <SDL2/SDL.h>
+#include <chrono>
+#include <mutex>
 #endif
 
 namespace audio {
@@ -104,12 +110,17 @@ struct Mixer {
     bool  isMuted = false;
     bool  open = false, offline = false;
     Stats st;
-    CRITICAL_SECTION cs;
+#ifdef _WIN32
+    CRITICAL_SECTION cs;              // recursive, which Lock relies on
+#else
+    std::recursive_mutex cs;          // CRITICAL_SECTION is recursive; this matches it
+#endif
     bool csInit = false;
 };
 Mixer M;
 
 // the device
+#ifdef _WIN32
 HWAVEOUT hwo = nullptr;
 HANDLE   hEvent = nullptr, hThread = nullptr;
 WAVEHDR  hdr[NBUF];
@@ -128,6 +139,22 @@ struct Lock {
 };
 
 void ensureCs() { if (!M.csInit) { InitializeCriticalSection(&M.cs); M.csInit = true; } }
+#else
+SDL_AudioDeviceID dev = 0;
+
+double nowSeconds() {
+    using clock = std::chrono::steady_clock;
+    static const clock::time_point t0 = clock::now();
+    return std::chrono::duration<double>(clock::now() - t0).count();
+}
+
+struct Lock {
+    Lock()  { M.cs.lock(); }
+    ~Lock() { M.cs.unlock(); }
+};
+
+void ensureCs() { M.csInit = true; }        // std::recursive_mutex needs no setting up
+#endif
 
 void panGains(float pan, float gain, float& l, float& r) {
     const float p = std::max(-1.0f, std::min(1.0f, pan));
@@ -151,6 +178,7 @@ void resetState() {
     M.st = Stats();
 }
 
+#ifdef _WIN32
 DWORD WINAPI audioThread(LPVOID) {
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
     while (running) {
@@ -167,6 +195,13 @@ DWORD WINAPI audioThread(LPVOID) {
     }
     return 0;
 }
+#else
+// SDL pulls instead of us pushing, so the mixer is called straight from its thread.
+void SDLCALL audioCallback(void*, Uint8* stream, int len) {
+    mixInto((int16_t*)stream, len / (int)(2 * sizeof(int16_t)));
+    ++M.st.buffers;
+}
+#endif
 
 }  // namespace
 
@@ -229,6 +264,7 @@ bool init(bool enabled) {
     buildBank(M.bank);
     resetState();
 
+#ifdef _WIN32
     WAVEFORMATEX fmt = {};
     fmt.wFormatTag = WAVE_FORMAT_PCM;
     fmt.nChannels = 2;
@@ -259,11 +295,42 @@ bool init(bool enabled) {
     }
     hThread = CreateThread(nullptr, 0, audioThread, nullptr, 0, nullptr);
     return true;
+#else
+    SDL_AudioSpec want = {}, got = {};
+    want.freq     = RATE;
+    want.format   = AUDIO_S16SYS;
+    want.channels = 2;
+    want.samples  = BUF_FRAMES;          // the same block the Windows feeder mixes
+    want.callback = audioCallback;
+    if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) {
+        printf("audio: %s, running silent\n", SDL_GetError());
+        return false;
+    }
+    // No format or rate changes: the bank is synthesised at RATE and mixInto writes
+    // interleaved stereo int16, so a converted stream would be mixed wrongly.
+    dev = SDL_OpenAudioDevice(nullptr, 0, &want, &got, 0);
+    if (!dev) {
+        printf("audio: no output device (%s), running silent\n", SDL_GetError());
+        SDL_QuitSubSystem(SDL_INIT_AUDIO);
+        return false;
+    }
+    M.open = true;
+    SDL_PauseAudioDevice(dev, 0);        // the callback starts here, after M.open
+    return true;
+#endif
 }
 
 void shutdown() {
     if (!M.open) return;
     if (!M.offline) {
+#ifndef _WIN32
+        if (dev) {
+            SDL_PauseAudioDevice(dev, 1);   // no callback can be in flight after this
+            SDL_CloseAudioDevice(dev);
+            dev = 0;
+            SDL_QuitSubSystem(SDL_INIT_AUDIO);
+        }
+#else
         running = false;
         if (hEvent) SetEvent(hEvent);
         if (hThread) { WaitForSingleObject(hThread, 1000); CloseHandle(hThread); hThread = nullptr; }
@@ -274,6 +341,7 @@ void shutdown() {
             hwo = nullptr;
         }
         if (hEvent) { CloseHandle(hEvent); hEvent = nullptr; }
+#endif
     }
     M.open = false;
 }
