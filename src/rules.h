@@ -148,7 +148,7 @@ namespace rules {
     // button. It only covers a narrow arc, so it is a thing you aim, and it spends
     // charge on whatever it stops. When the charge is gone it stays down until the
     // depot refills it.
-    static const float SHIELD_ARC      = 0.5236f;  // 30 degrees, in radians
+    static const float SHIELD_ARC      = 1.5708f;  // 90 degrees, in radians (three times the 30 it was)
     static const float SHIELD_RADIUS   = 46.0f;    // how far out from the spaceman it hangs
     static const float SHIELD_CAPACITY = 100.0f;
 

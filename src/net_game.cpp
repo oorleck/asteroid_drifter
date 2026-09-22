@@ -291,6 +291,7 @@ static void hostRead(Game& g, NetSession& n) {
             const uint8_t flags = r.u8();
             cmd.thrust = flags & 1;
             cmd.fire = flags & 2;
+            cmd.jumpHeld = flags & 4;
             cmd.jumpSeq = r.u8();
             cmd.heavySeq = r.u8();
             if (r.bad) continue;
@@ -628,7 +629,7 @@ void Game::netEnd(float dt) {
         w.u16(++net->cmdSeq);
         w.f32(localCmd.aim);
         w.f32(localCmd.move);
-        w.u8((localCmd.thrust ? 1 : 0) | (localCmd.fire ? 2 : 0));
+        w.u8((localCmd.thrust ? 1 : 0) | (localCmd.fire ? 2 : 0) | (localCmd.jumpHeld ? 4 : 0));
         w.u8(localCmd.jumpSeq);
         w.u8(localCmd.heavySeq);
         net->ep.sendUnreliable(w.b);

@@ -36,11 +36,13 @@ namespace tune {
     static const float BULLET_GRAV = 9.0f;
     static const float HEAVY_GRAV  = 4.0f;     // the F shell: 60% less pull than the 10 it had
     static const float PLAYER_R    = 6.5f;
-    static const float WALK_SPEED  = 0.0f;
+    static const float WALK_SPEED  = 220.0f;   // running speed along a rock's surface (it was 0: walking was off)
     static const float WALK_ACCEL  = 1500.0f;
     static const float AIR_ACCEL   = 0.0f;
     static const float JUMP_SPEED  = 450.3f;   // 260 x sqrt(3): three times the height at the same gravity
     static const float JUMP_MIN_LIFT = 0.17f;  // a jump leaves the ground at least this far (sine, about 10 degrees) off the surface
+    static const float JUMP_CUT_WINDOW  = 0.14f;  // let go of Space within this long after leaving the ground for a small hop
+    static const float JUMP_SHORT_FACTOR = 0.55f; // a small hop caps the upward speed at this share of a full jump (about 30% of the height)
     static const float THRUST      = 360.0f;   // 20% weaker again (750, 562.5, 450, 360)
     static const float PLAYER_GRAV = 1.3f;     // the spaceman feels this much more than the rocks and shots do (30% up)
     static const float FUEL_MAX    = 24.0f;    // the tank (it was 100, 80, 40, 32); burn and regen are unchanged, so the duty cycle is too: 0.96 s of burn from full
@@ -113,6 +115,7 @@ struct PlayerCmd {
     float   move = 0;                // -1..1 along the surface
     bool    thrust = false;          // the rocket, which pushes toward the aim
     bool    fire = false;            // the rifle, held
+    bool    jumpHeld = false;        // the jump key still down, so a tap can be told from a hold
     uint8_t jumpSeq = 0, heavySeq = 0;
 };
 
@@ -128,6 +131,9 @@ struct Player {
     float fuel = tune::FUEL_MAX;
     float fireCd = 0, heavyCd = 0, salvoCd = 0, nukeCd = 0, jumpCd = 0, coyote = 0;
     float legPhase = 0, thrustGlow = 0, hurtGlow = 0;
+    v2    jumpDir = v2(0, 1);       // world direction of the last jump, for cutting it short
+    bool  jumpCanCut = false;       // still early enough that letting go of Space shrinks this jump
+    float jumpCutTimer = 0;
     float health = 100;
     float sinceHurt = 99;          // seconds since the suit last took damage
     bool  thrusting = false;
@@ -441,6 +447,7 @@ struct Game {
     // blast from `src` does it soak up? (returns the damage that gets through)
     bool  shieldBlocks(dv2 p) const;
     float shieldAbsorb(dv2 src, float dmg);
+    float shieldFacing() const;                        // the shield faces 180 degrees from the aim: away from the cursor
     void  drawShield(Renderer& r);
 
 // Internals. Public so the test harness in main.cpp can drive them directly.

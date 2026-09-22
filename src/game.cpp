@@ -246,8 +246,8 @@ void Game::updatePlayer(Renderer& r, const Input& in, float dt) {
         else if (!pl.fieldLocked && pl.field > 5.0f)          { pl.fieldOn = true; sfxUI(Sfx::FieldOn, 0.9f); }
     }
 
-    // ---- the blast shield: Left Alt holds it up, once bought
-    pl.shieldUp = pl.hasShield && pl.shield > 0.0f && in.down[VK_LMENU] && state == State::Playing;
+    // ---- the blast shield: Left Alt or right mouse holds it up, once bought
+    pl.shieldUp = pl.hasShield && pl.shield > 0.0f && (in.down[VK_LMENU] || in.mouse[1]) && state == State::Playing;
     pl.shieldFlash = approach(pl.shieldFlash, 0.0f, 7.0f, dt);
     if (pl.shieldUp && !prevShieldUp) sfxUI(Sfx::ShieldUp, 0.9f);
     prevShieldUp = pl.shieldUp;
@@ -255,12 +255,22 @@ void Game::updatePlayer(Renderer& r, const Input& in, float dt) {
     // ---- everything else becomes a command
     PlayerCmd& c = localCmd;
     c.aim    = std::atan2(aimDir.y, aimDir.x);
-    c.thrust = in.mouse[1] || in.down[VK_SHIFT];             // right mouse (or Shift) is the rocket
+    // Space does double duty: on a rock it jumps (a short tap gives a smaller hop), and off
+    // one - with nothing to jump from - it fires the rocket instead. Shift always fires it.
+    const bool onGround = pl.grounded || pl.coyote > 0.0f;
+    c.thrust = in.down[VK_SHIFT] || (!onGround && in.down[VK_SPACE]);
     c.fire   = in.mouse[0];
     c.move   = 0;
     if (in.down['A'] || in.down[VK_LEFT])  c.move -= 1.0f;
     if (in.down['D'] || in.down[VK_RIGHT]) c.move += 1.0f;
-    if (in.pressed[VK_SPACE] || in.pressed['W'] || in.pressed[VK_UP]) ++c.jumpSeq;
+    if (onGround) {
+        if (in.pressed[VK_SPACE] || in.pressed['W'] || in.pressed[VK_UP]) ++c.jumpSeq;
+    } else {
+        if (in.pressed['W'] || in.pressed[VK_UP]) ++c.jumpSeq;    // Space is the rocket in the air; W and Up still ask for a jump
+    }
+    // Whether the jump key is still down, regardless of onGround: a jump leaves the ground the
+    // instant it starts, and the short-hop cut needs to know if Space is still held through that.
+    c.jumpHeld = in.down[VK_SPACE] || in.down['W'] || in.down[VK_UP];
     // The charge shot has to be bought: it is the homing shell.
     if (in.pressed['F'] || in.mousePressed[2]) ++c.heavySeq;
 
@@ -414,8 +424,24 @@ void Game::stepPlayer(Player& p, const PlayerCmd& c, float dt) {
         p.grounded = false;
         p.coyote = 0;
         p.jumpCd = 0.18f;
+        p.jumpDir = jd;
+        p.jumpCanCut = true;
+        p.jumpCutTimer = tune::JUMP_CUT_WINDOW;
         spawnSparks(p.pos, jd * -70.0f, 7, 90.0f, Col(0.8f, 0.9f, 1.0f), 0.3f);
         sfx(Sfx::Jump, p.pos, self ? 0.8f : 0.55f, sfxRng.range(0.95f, 1.06f));
+    }
+    // A short tap of the jump key gives a smaller hop: let go within JUMP_CUT_WINDOW of
+    // leaving the ground and the upward speed is capped, right then, at a fraction of a
+    // full jump. Hold it past that window and the jump keeps its full height.
+    if (p.jumpCanCut) {
+        if (!c.jumpHeld) {
+            const float along = dot(p.vel, p.jumpDir);
+            const float cap = tune::JUMP_SPEED * tune::JUMP_SHORT_FACTOR;
+            if (along > cap) p.vel -= p.jumpDir * (along - cap);
+            p.jumpCanCut = false;
+        } else if ((p.jumpCutTimer -= dt) <= 0.0f) {
+            p.jumpCanCut = false;
+        }
     }
 
     if (self && debugTrace && ((int)(time * 60.0f) % 45) == 0) {
@@ -765,7 +791,7 @@ void Game::drawHud(Renderer& r) {
         y += gap;
     }
     if (pl.hasShield) {
-        const char* label = pl.shieldUp ? "BLAST SHIELD  UP" : (pl.shield <= 0.0f ? "BLAST SHIELD  EMPTY" : "BLAST SHIELD  [LEFT ALT]");
+        const char* label = pl.shieldUp ? "BLAST SHIELD  UP" : (pl.shield <= 0.0f ? "BLAST SHIELD  EMPTY" : "BLAST SHIELD  [LEFT ALT / R.MOUSE]");
         bar(m, y, bw, bh, pl.shield / rules::SHIELD_CAPACITY, pal::SHIELD, label, pl.shield < 20.0f);
         y += gap;
     }
@@ -916,9 +942,9 @@ void Game::drawHud(Renderer& r) {
     // ---- help: only the things you own are listed
     if (showHelp) {
         char l1[200], l2[240], l3[200], l4[120];
-        snprintf(l1, sizeof l1, "MOVE  A / D     JUMP  SPACE OR W     AIM  MOUSE     ROCKET  RIGHT MOUSE OR SHIFT");
+        snprintf(l1, sizeof l1, "MOVE/RUN  A / D     JUMP  SPACE OR W (TAP FOR A SMALL HOP)     AIM  MOUSE     ROCKET  SHIFT (OR SPACE IN THE AIR)");
         int n = snprintf(l2, sizeof l2, "FIRE  LEFT MOUSE");
-        if (pl.hasShield) n += snprintf(l2 + n, sizeof l2 - n, "     BLAST SHIELD  HOLD LEFT ALT");
+        if (pl.hasShield) n += snprintf(l2 + n, sizeof l2 - n, "     BLAST SHIELD  HOLD LEFT ALT OR RIGHT MOUSE");
         if (pl.hasHoming) n += snprintf(l2 + n, sizeof l2 - n, "     HOMING SHELL  F");
         if (pl.hasSalvo)  n += snprintf(l2 + n, sizeof l2 - n, "     MISSILES  G");
         if (pl.hasFractal) n += snprintf(l2 + n, sizeof l2 - n, "     FRACTAL SHELL  Z");

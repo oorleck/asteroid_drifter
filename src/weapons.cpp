@@ -324,9 +324,15 @@ void Game::drawField(Renderer& r) {
 }
 
 // ------------------------------------------------------------- blast shield --
-// A narrow plate held toward the cursor. Bullets and missiles that reach it are
-// stopped; blasts that go off within its arc are soaked up. Both cost charge,
-// and whatever the charge cannot cover gets through to the suit.
+// A plate held toward your back: it faces 180 degrees from the cursor, so raising
+// it while you fight covers your rear rather than the enemy you are aiming at.
+// Bullets and missiles that reach it are stopped; blasts that go off within its
+// arc are soaked up. Both cost charge, and whatever the charge cannot cover gets
+// through to the suit.
+float Game::shieldFacing() const {
+    return wrapAngle(pl.aim + PIF);
+}
+
 bool Game::shieldBlocks(dv2 p) const {
     if (!pl.shieldUp) return false;
     const v2 rel = tov2(p - pl.pos);
@@ -334,14 +340,14 @@ bool Game::shieldBlocks(dv2 p) const {
     // A band rather than a line, wider than one step of a fast bullet, so nothing
     // can hop across the plate between two frames.
     if (d < rules::SHIELD_RADIUS - 11.0f || d > rules::SHIELD_RADIUS + 8.0f) return false;
-    return std::fabs(wrapAngle(std::atan2(rel.y, rel.x) - pl.aim)) <= rules::SHIELD_ARC * 0.5f;
+    return std::fabs(wrapAngle(std::atan2(rel.y, rel.x) - shieldFacing())) <= rules::SHIELD_ARC * 0.5f;
 }
 
 float Game::shieldAbsorb(dv2 src, float dmg) {
     if (!pl.shieldUp || pl.shield <= 0.0f || dmg <= 0.0f) return dmg;
     const v2 rel = tov2(src - pl.pos);
     if (len2(rel) <= 1.0f) return dmg;                      // right on top of you: no "side" to shield
-    if (std::fabs(wrapAngle(std::atan2(rel.y, rel.x) - pl.aim)) > rules::SHIELD_ARC * 0.5f + 0.04f)
+    if (std::fabs(wrapAngle(std::atan2(rel.y, rel.x) - shieldFacing())) > rules::SHIELD_ARC * 0.5f + 0.04f)
         return dmg;                                         // the blast is outside the plate's arc
     const float take = std::min(dmg, pl.shield);
     pl.shield -= take;
@@ -355,7 +361,8 @@ void Game::drawShield(Renderer& r) {
     if (!pl.shieldUp) return;
     const v2 p = camRel(pl.pos);
     const float R = rules::SHIELD_RADIUS;
-    const float a0 = pl.aim - rules::SHIELD_ARC * 0.5f, a1 = pl.aim + rules::SHIELD_ARC * 0.5f;
+    const float facing = shieldFacing();
+    const float a0 = facing - rules::SHIELD_ARC * 0.5f, a1 = facing + rules::SHIELD_ARC * 0.5f;
     const float f = pl.shieldFlash;
     const float charge = pl.shield / rules::SHIELD_CAPACITY;
     const float blink = charge < 0.25f ? (std::fmod(time * 9.0f, 1.0f) < 0.5f ? 0.45f : 1.0f) : 1.0f;

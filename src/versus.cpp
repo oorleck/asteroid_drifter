@@ -248,6 +248,7 @@ void Game::botThink(Peer& b, float dt) {
     PlayerCmd& c = b.cmd;
     c.fire = false;
     c.thrust = false;
+    c.jumpHeld = true;              // bots always take the full jump: no tapping for a short hop
 
     // The nearest living opponent.
     Player* target = nullptr;

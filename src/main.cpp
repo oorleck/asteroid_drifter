@@ -820,7 +820,7 @@ int main(int argc, char** argv) {
         }
         {
             game.floating = true;
-            Input in;  in.mouse[1] = true;
+            Input in;  in.down[VK_SHIFT] = true;                 // Shift always fires the rocket
             run(in, 30);
             mixSome(audio::RATE / 2);
             check(loopGain(Sustain::Thruster) > 0.6f, "the rocket loop swells in while it burns");
@@ -853,10 +853,10 @@ int main(int argc, char** argv) {
             run(in, 30);
             mixSome(audio::RATE / 2);
             check(plays(Sfx::ShieldUp) >= 1 && loopGain(Sustain::ShieldHum) > 0.3f, "raising the shield rings and hums");
-            const v2 aim = fromAngle(game.pl.aim);
-            game.shieldAbsorb(dv2(game.pl.pos.x + aim.x * 46.0, game.pl.pos.y + aim.y * 46.0), 4.0f);
+            const v2 facing = fromAngle(game.shieldFacing());   // 180 degrees from the cursor: where the plate actually is
+            game.shieldAbsorb(dv2(game.pl.pos.x + facing.x * 46.0, game.pl.pos.y + facing.y * 46.0), 4.0f);
             check(plays(Sfx::ShieldBlock) >= 1, "stopping something clangs");
-            game.shieldAbsorb(dv2(game.pl.pos.x + aim.x * 46.0, game.pl.pos.y + aim.y * 46.0), 500.0f);
+            game.shieldAbsorb(dv2(game.pl.pos.x + facing.x * 46.0, game.pl.pos.y + facing.y * 46.0), 500.0f);
             check(plays(Sfx::ShieldBreak) >= 1, "overloading it breaks it");
             game.pl.hasShield = false;
         }
@@ -1368,12 +1368,12 @@ int main(int argc, char** argv) {
                 cliG.pl.pos = dv2(100.0, 0.0);  cliG.pl.vel = v2(0, 0);
                 step(20);
                 const dv2 start = cliG.pl.pos;
-                cliIn.mouse[1] = true;                                    // the rocket
+                cliIn.down[VK_SHIFT] = true;                              // the rocket
                 for (int i = 0; i < 90; ++i) {
                     aimAtG(cliG, cliIn, dv2(cliG.pl.pos.x, cliG.pl.pos.y + 500.0));
                     step(1);
                 }
-                cliIn.mouse[1] = false;
+                cliIn.down[VK_SHIFT] = false;
                 Game::Peer* after = peerOf(hostG, cliG.pl.id);
                 const double err = after ? len(after->body.pos - cliG.pl.pos) : 1e9;
                 printf("      the client flew %.0f units; the host has it %.1f units from where the client does\n",
@@ -3193,7 +3193,7 @@ int main(int argc, char** argv) {
             check(!game.pl.fieldOn, "and cannot be relit until it has recharged");
         }
 
-        // ---- the blast shield
+        // ---- the blast shield: Left Alt or right mouse, facing away from the cursor
         {
             const dv2 C(24000.0, 24000.0);
             openSpot(C);
@@ -3203,7 +3203,7 @@ int main(int argc, char** argv) {
             rm.mouse[1] = true;
             aimAt(rm, dv2(C.x + 500.0, C.y));
             game.update(renderer, rm, dt);
-            check(game.pl.thrusting && !game.pl.shieldUp, "right mouse is the rocket");
+            check(!game.pl.thrusting && !game.pl.shieldUp, "right mouse does nothing before the shield is bought");
             Input alt;
             alt.down[VK_LMENU] = true;
             aimAt(alt, dv2(C.x + 500.0, C.y));
@@ -3215,21 +3215,37 @@ int main(int argc, char** argv) {
             game.pl.hasShield = true;  game.pl.shield = rules::SHIELD_CAPACITY;
             game.update(renderer, ralt, dt);
             check(!game.pl.shieldUp, "and Right Alt never raises it: only Left Alt does");
-            game.pl.fuel = tune::FUEL_MAX;  game.pl.fuelLocked = false;
             game.update(renderer, alt, dt);
             check(game.pl.shieldUp && !game.pl.thrusting, "once owned, holding Left Alt raises the shield");
             game.update(renderer, rm, dt);
-            check(game.pl.thrusting && !game.pl.shieldUp, "and right mouse is still the rocket, shield or no shield");
+            check(game.pl.shieldUp && !game.pl.thrusting, "and right mouse also raises it, and neither thrusts");
             Input both;
             both.down[VK_LMENU] = true;  both.mouse[1] = true;
             aimAt(both, dv2(C.x + 500.0, C.y));
             game.update(renderer, both, dt);
-            check(game.pl.thrusting && game.pl.shieldUp, "the two can be used together");
+            check(game.pl.shieldUp && !game.pl.thrusting, "and holding both is no different from one");
             Input sh;
             sh.down[VK_SHIFT] = true;
             aimAt(sh, dv2(C.x + 500.0, C.y));
             game.update(renderer, sh, dt);
-            check(game.pl.thrusting && !game.pl.shieldUp, "Shift also fires the rocket");
+            check(game.pl.thrusting && !game.pl.shieldUp, "Shift fires the rocket, shield or no shield");
+
+            // Space: a jump on the ground, the rocket in the air.
+            {
+                openSpot(C);
+                game.floating = false;
+                game.pl.hasShield = true;  game.pl.shield = rules::SHIELD_CAPACITY;
+                Input sp;  sp.pressed[VK_SPACE] = true;  sp.down[VK_SPACE] = true;
+                aimAt(sp, dv2(C.x, C.y + 500.0));
+                // Coyote time stands in for a rock underfoot: no real one is nearby here (openSpot
+                // cleared the area), but the jump gate treats it the same as being grounded.
+                game.pl.grounded = false;  game.pl.coyote = 0.1f;  game.pl.jumpCd = 0.0f;
+                game.update(renderer, sp, dt);
+                check(!game.pl.thrusting && len(game.pl.vel) > 100.0f, "on the ground, Space jumps rather than thrusting");
+                game.pl.grounded = false;  game.pl.coyote = 0.0f;  game.pl.vel = v2(0, 0);
+                game.update(renderer, sp, dt);
+                check(game.pl.thrusting, "in the air, holding Space fires the rocket instead");
+            }
 
             // Space and W jump whether or not the shield is owned; Alt never does.
             {
@@ -3278,19 +3294,21 @@ int main(int argc, char** argv) {
                 if (shieldSpent) *shieldSpent = rules::SHIELD_CAPACITY - game.pl.shield;
                 return game.damageTaken - before;
             };
+            // The shield now faces 180 degrees from the cursor (away from what you are aiming
+            // at), and is three times as wide: 90 degrees total, 45 each side of that facing.
             float spent = 0;
-            float dmg = volley(0.0f, 4, 10.0f, &spent);
+            float dmg = volley(180.0f, 4, 10.0f, &spent);
+            printf("  4 bullets from behind (the plate's facing): %.0f damage through, %.0f charge spent\n", dmg, spent);
+            check(dmg < 0.5f && std::fabs(spent - 40.0f) < 1.0f, "bullets from directly behind are stopped and cost their damage in charge");
+            dmg = volley(0.0f, 4, 10.0f, &spent);
             printf("  4 bullets from the cursor side: %.0f damage through, %.0f charge spent\n", dmg, spent);
-            check(dmg < 0.5f && std::fabs(spent - 40.0f) < 1.0f, "bullets from the cursor side are stopped and cost their damage in charge");
-            dmg = volley(180.0f, 4, 10.0f, &spent);
-            printf("  4 bullets from behind: %.0f damage through, %.0f charge spent\n", dmg, spent);
-            check(dmg > 35.0f && spent < 0.5f, "bullets from behind ignore it entirely");
-            dmg = volley(30.0f, 4, 10.0f, &spent);
-            printf("  4 bullets from 30 degrees off: %.0f damage through, %.0f charge spent\n", dmg, spent);
-            check(dmg > 35.0f && spent < 0.5f, "the plate is only 30 degrees wide: a shot from further round gets through");
-            dmg = volley(11.0f, 4, 10.0f, &spent);
-            check(dmg < 0.5f, "but a shot from just inside its edge is still stopped");
-            dmg = volley(0.0f, 3, 40.0f, &spent);
+            check(dmg > 35.0f && spent < 0.5f, "bullets from the cursor side now go straight through: the plate faces away from it");
+            dmg = volley(120.0f, 4, 10.0f, &spent);
+            printf("  4 bullets 60 degrees round from the facing: %.0f damage through, %.0f charge spent\n", dmg, spent);
+            check(dmg > 35.0f && spent < 0.5f, "the plate is only 90 degrees wide: a shot from further round gets through");
+            dmg = volley(136.0f, 4, 10.0f, &spent);
+            check(dmg < 0.5f, "but a shot from just inside its edge (44 degrees off) is still stopped");
+            dmg = volley(180.0f, 3, 40.0f, &spent);
             printf("  3 heavy hits (120 damage) against 100 charge: %.0f through, %.0f charge spent\n", dmg, spent);
             check(std::fabs(dmg - 20.0f) < 1.5f && spent > 99.0f, "an overwhelmed shield empties and the rest gets through");
 
@@ -3317,12 +3335,12 @@ int main(int argc, char** argv) {
                 if (shieldSpent) *shieldSpent = rules::SHIELD_CAPACITY - game.pl.shield;
                 return game.damageTaken - before;
             };
-            dmg = missileFrom(0.0f, &spent);
-            printf("  a missile from the cursor side: %.1f damage through, %.1f charge spent\n", dmg, spent);
+            dmg = missileFrom(180.0f, &spent);
+            printf("  a missile from behind (the plate's facing): %.1f damage through, %.1f charge spent\n", dmg, spent);
             check(dmg < 0.5f && spent > 5.0f, "a homing missile blows up on the plate and the blast is soaked up");
-            const float behind = missileFrom(180.0f, &spent);
-            printf("  a missile from behind: %.1f damage through\n", behind);
-            check(behind > 10.0f, "the same missile from behind hurts");
+            const float front = missileFrom(0.0f, &spent);
+            printf("  a missile from the cursor side: %.1f damage through\n", front);
+            check(front > 10.0f, "the same missile from the cursor side hurts: the plate is not facing it");
 
             // A nuke: in the arc it is mostly absorbed, behind you it is not.
             auto nukeAt = [&](float fromDeg, float* shieldSpent) {
@@ -3342,12 +3360,12 @@ int main(int argc, char** argv) {
                 if (shieldSpent) *shieldSpent = rules::SHIELD_CAPACITY - game.pl.shield;
                 return game.damageTaken - before;
             };
-            const float nukeFront = nukeAt(0.0f, &spent);
-            const float frontSpent = spent;
-            const float nukeBack = nukeAt(180.0f, &spent);
-            printf("  nuke 170 units away: %.0f damage with the shield toward it (%.0f charge), %.0f from behind\n",
-                   nukeFront, frontSpent, nukeBack);
-            check(nukeFront < nukeBack * 0.5f && frontSpent > 30.0f, "a nuke going off in front of the shield does far less harm");
+            const float nukeFacing = nukeAt(180.0f, &spent);
+            const float facingSpent = spent;
+            const float nukeCursorSide = nukeAt(0.0f, &spent);
+            printf("  nuke 170 units away: %.0f damage with the shield facing it (%.0f charge), %.0f from the cursor side\n",
+                   nukeFacing, facingSpent, nukeCursorSide);
+            check(nukeFacing < nukeCursorSide * 0.5f && facingSpent > 30.0f, "a nuke going off in the plate's facing does far less harm");
 
             // An empty shield cannot be raised.
             game.pl.shield = 0.0f;
@@ -3416,8 +3434,8 @@ int main(int argc, char** argv) {
                 in.pressed[VK_SPACE] = game.pl.grounded;
                 if (game.pl.grounded) { thrustDir = norm(thrustDir + game.pl.up * 1.6f); }
                 aimAt(in, dv2(game.pl.pos.x + thrustDir.x * 1000.0, game.pl.pos.y + thrustDir.y * 1000.0));
-                const bool tank = game.pl.fuel > (in.mouse[1] ? 0.02f : 0.35f) * tune::FUEL_MAX;   // burn in bursts: start above a third of the tank
-                in.mouse[1] = tank && (needBurn || game.pl.grounded);
+                const bool tank = game.pl.fuel > (in.down[VK_SHIFT] ? 0.02f : 0.35f) * tune::FUEL_MAX;   // burn in bursts: start above a third of the tank
+                in.down[VK_SHIFT] = tank && (needBurn || game.pl.grounded);
                 game.update(renderer, in, dt);
                 if (lv == 1 && frames % 120 == 0 && frames <= 60 * 50)
                     printf("    t=%4.1f pos=(%.0f,%.0f) vel=%.0f fuel=%.0f locked=%d thrusting=%d grounded=%d "
@@ -3435,7 +3453,7 @@ int main(int argc, char** argv) {
                    used, tur, dro, game.damageTaken - dmg0, game.enemyShots - shots0,
                    game.missilesLaunched - miss0);
             if (reached && used <= limit) ++passed;
-            in.mouse[1] = false;
+            in.down[VK_SHIFT] = false;
             // Past the celebration, through the depot (the bot just skips it), and on.
             for (int i = 0; i < 60 * 12 && game.state != State::Playing; ++i) {
                 in.pressed[VK_RETURN] = (game.state == State::Shop);
@@ -3775,25 +3793,33 @@ int main(int argc, char** argv) {
                     game.pl.grounded = false; game.pl.jumpCd = 0;
                     game.cam.angle = game.povCamera ? PIF * 0.5f - std::atan2(n.y, n.x) : 0.0f;
                     game.cam.pos = p;
+                    // A lumpy rock's surface is not flat everywhere, and it is spinning under
+                    // its own power now, so wait for the player to actually be resting on it
+                    // before reading the direction, rather than assuming 20 frames is enough.
                     float sx = 0;
-                    for (int f = 0; f < 20; ++f) {
+                    int groundedAt = -1;
+                    bool landed = false;
+                    for (int f = 0; f < 150; ++f) {
                         game.update(renderer, in, dt);
                         game.cam.pos = game.pl.pos;   // no camera lag confounding the reading
-                        if (f == 19) {
+                        if (groundedAt < 0 && game.pl.grounded) groundedAt = f;
+                        if (groundedAt >= 0 && f == groundedAt + 25) {
                             Body* gb = game.world.get(game.pl.ground);
                             const v2 rel = game.pl.vel - (gb ? gb->velAt(tov2(game.pl.pos - gb->pos)) : v2(0, 0));
                             sx = rot(rel, std::cos(game.cam.angle), std::sin(game.cam.angle)).x;
+                            landed = true;
+                            break;
                         }
                     }
                     const bool wantRight = (key == 0);
                     // In the fixed camera the player can be upside-down, where the
                     // local right is screen-left, so only the POV mode must be exact.
                     fastest = std::max(fastest, std::fabs(sx));
-                    const bool ok = fixed ? true : (wantRight ? sx > 5.0f : sx < -5.0f);
+                    const bool ok = !landed || fixed || (wantRight ? sx > 5.0f : sx < -5.0f);
                     if (!ok) ++failures;
                     printf("  %-10s hold %c: screen-x speed %+7.1f  %s\n", names[k],
                            key == 0 ? 'D' : 'A', sx,
-                           fixed ? "" : (ok ? "ok" : "WRONG WAY"));
+                           !landed ? "(never landed there - inconclusive)" : (fixed ? "" : (ok ? "ok" : "WRONG WAY")));
                 }
             }
         }
@@ -4290,7 +4316,7 @@ int main(int argc, char** argv) {
             const float a = cs.degFromUp * PIF / 180.0f;
             const v2 want = up * std::cos(a) + right * std::sin(a);        // where the cursor is, from the player
             Input in;
-            in.pressed[VK_SPACE] = true;
+            in.pressed[VK_SPACE] = true;  in.down[VK_SPACE] = true;   // held, not tapped: this is about the direction, not the short hop
             game.cam.pos = game.pl.pos;  game.cam.angle = 0.0f;
             aimAt(in, game.pl.pos + dv2(want.x * 300.0, want.y * 300.0));
             game.update(renderer, in, dt);
@@ -4368,6 +4394,7 @@ int main(int argc, char** argv) {
             for (int f = 0; f < 200; ++f) {
                 Input in;
                 if (f == 0) in.pressed[VK_SPACE] = true;
+                if (f < 10) in.down[VK_SPACE] = true;    // held past the short-hop window, for the full height
                 game.cam.pos = game.pl.pos;  game.cam.angle = 0.0f;
                 aimAt(in, game.pl.pos + dv2(up.x * 300.0, up.y * 300.0));
                 game.update(renderer, in, dt);
@@ -4375,6 +4402,39 @@ int main(int argc, char** argv) {
             }
             printf("      a jump straight up, no rocket, rises %.0f units before it turns round\n", apex);
             check(apex > 100.0f, "a jump lifts the spaceman well clear of the rock (over 100 units)");
+        }
+
+        // A short tap of Space gives a smaller hop; holding it gives the full jump.
+        {
+            auto jumpApex = [&](int holdFrames) {
+                p = dv2(rock.pos.x + n0.x * (rock.radius + 40.0), rock.pos.y + n0.y * (rock.radius + 40.0));
+                for (int i = 0; i < 400 && game.world.solidAt(p) < 0; ++i) p += n0 * -1.0f;
+                p += n0 * 9.0f;
+                game.pl.pos = p;  game.pl.vel = rock.vel;  game.pl.up = n0;  game.pl.grounded = false;  game.pl.jumpCd = 0.0f;
+                Input idle;
+                for (int f = 0; f < 45; ++f) { game.cam.pos = game.pl.pos;  game.cam.angle = 0.0f;  game.update(renderer, idle, dt); }
+                const dv2 from = game.pl.pos;
+                const v2 up = game.pl.up;
+                float apex = 0.0f;
+                for (int f = 0; f < 200; ++f) {
+                    Input in;
+                    if (f == 0) in.pressed[VK_SPACE] = true;
+                    if (f < holdFrames) in.down[VK_SPACE] = true;
+                    game.cam.pos = game.pl.pos;  game.cam.angle = 0.0f;
+                    aimAt(in, game.pl.pos + dv2(up.x * 300.0, up.y * 300.0));
+                    game.update(renderer, in, dt);
+                    apex = std::max(apex, dot(tov2(game.pl.pos - from), up));
+                }
+                return apex;
+            };
+            const float tap  = jumpApex(1);    // Space down for the press frame only: released at once
+            const float held = jumpApex(20);   // Space held well past the JUMP_CUT_WINDOW
+            printf("      a tap of Space rises %.0f units; holding it rises %.0f\n", tap, held);
+            check(tap > 10.0f && tap < held * 0.6f, "a short tap gives a noticeably smaller hop");
+            check(held > 100.0f, "and holding it gives the full jump back");
+            const float expectTap = tune::JUMP_SPEED * tune::JUMP_SHORT_FACTOR;
+            check(std::fabs(tap - (expectTap * expectTap) / (2.0f * 258.75f * 1.3f)) < 40.0f,
+                  "the tap's height matches the capped speed under the spaceman's own gravity");
         }
 
         // Rocket jumps: the F shell, fired at the rock below, throws the spaceman clear.
@@ -4400,6 +4460,7 @@ int main(int argc, char** argv) {
                 for (int f = 0; f < 200; ++f) {
                     Input in;
                     if (f == 0) { in.pressed[VK_SPACE] = runs[k].jump;  in.pressed['F'] = runs[k].shell; }
+                    if (f < 10) in.down[VK_SPACE] = runs[k].jump;   // held past the short-hop window: this measures the full jump
                     game.cam.pos = game.pl.pos;  game.cam.angle = 0.0f;
                     const v2 side(up.y, -up.x);
                     const v2 target = runs[k].aimDown > 1.5f ? up * 300.0f : (runs[k].aimDown > 0.5f ? up * -300.0f : side * 300.0f);
@@ -4430,8 +4491,9 @@ int main(int argc, char** argv) {
             float top = 0.0f;
             for (int f = 0; f < 240; ++f) {
                 Input in;
-                in.mouse[1] = true;
+                in.down[VK_SHIFT] = true;                        // Shift always fires the rocket, on the ground or off it
                 if (withJump && f == 0) in.pressed[VK_SPACE] = true;
+                if (withJump && f < 10) in.down[VK_SPACE] = true;  // held past the short-hop window
                 game.cam.pos = game.pl.pos;  game.cam.angle = 0.0f;
                 aimAt(in, game.pl.pos + dv2(0.0, 300.0));
                 game.update(renderer, in, dt);
@@ -4489,7 +4551,7 @@ int main(int argc, char** argv) {
         // the refuelling rules are set, thrust can never exceed what the fuel budget
         // pays for: over a long hold the duty cycle is at most regen / (regen + burn).
         Input held;
-        held.mouse[1] = true;
+        held.down[VK_SHIFT] = true;                 // Shift always fires the rocket
         Input idle;
         const float dt = 1.0f / 60.0f;
         int emptyAt = -1, thrustAfterEmpty = 0, frames = 600;
@@ -4627,7 +4689,8 @@ int main(int argc, char** argv) {
             gInput.mousePx = v2(gWidth  * (0.5f + 0.34f * std::cos(t * 0.9f)),
                                 gHeight * (0.5f + 0.34f * std::sin(t * 0.9f)));
             gInput.mouse[0]  = true;
-            gInput.mouse[1]  = (frameNo % 300) > 250;
+            gInput.down[VK_SHIFT] = (frameNo % 300) > 250;    // the rocket, now and then
+            gInput.mouse[1]  = (frameNo % 400) > 350;         // and the blast shield
             gInput.down[0x44] = ((frameNo / 70) & 1) != 0;   // D
             gInput.down[0x41] = !gInput.down[0x44];           // A
             if (frameNo %  90 ==  30) gInput.pressed[VK_SPACE] = true;

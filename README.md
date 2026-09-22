@@ -122,7 +122,7 @@ freezes and the depot opens. Click a row, or press its number:
 | **Missile salvo** | `G` | 450 (6 salvos), then 150 for 6 more | Five small missiles at once, each sent after a *different* target. With fewer than five targets they double up; incoming enemy missiles count as targets. The missiles are small and **blow up after 2.3 s** wherever they are (about 1300 units), and will not lock onto anything further off than 1200. |
 | **Nuke** | `N` | 400 for 3 | A grenade thrown at 340 units a second and pulled down by gravity 2.5 times as hard as a loose rock is (it was 1.7), so it arcs down into the rocks, with a 3.6 s fuse shown on the bomb itself. A huge blast: it vaporises rock, kills everything in its radius and hurts you if you are close. |
 | **Force field** | `X` | 500 | A bubble that shoves bullets, missiles, drones and rocks away. Costs energy while it is on. |
-| **Blast shield** | hold Left Alt | 350, then 120 to refill | A 30 degree plate held toward the cursor. It stops bullets and missiles that reach it and soaks up blasts that go off inside its arc, spending charge equal to the damage it stops. When it is empty it stays down until you refill it. |
+| **Blast shield** | hold Left Alt or right mouse | 350, then 120 to refill | A 90 degree plate (three times the width it had) held **away from the cursor**: it covers your back while you fire on something, not the thing you are aiming at. It stops bullets and missiles that reach it and soaks up blasts that go off inside its arc, spending charge equal to the damage it stops. When it is empty it stays down until you refill it. |
 | **Fractal shell** | `Z` | 1400 (3 shells), then 500 for 3 more | The most expensive thing in the depot, and the most powerful against groups. A homing shell that **splits in two** every so often, up to **five times**, so one shot can become **32 pieces**, and every piece homes on its own target. Each generation is **0.45** of the one before (half, less a tenth), so its power is spread across a swarm rather than spent in one place. |
 
 Purchases last for the run. Nukes can only be bought, never found. `R` is the restart key, so the nuke stays on `N`.
@@ -203,8 +203,8 @@ the rocket.
   starts it at once).
 * **Bots** are sparring partners, not champions. They lead their shots but wobble,
   fire in bursts, jump about, and fly at you with the rocket; about 30% of their
-  rounds land. Walking is off (see *Tuning*), so a bot can only leave its rock by
-  jumping toward their target, which took some teaching.
+  rounds land. Bots do not run (they only move by jumping and the rocket, see
+  *Tuning*), jumping toward their target, which took some teaching.
 * **The screen.** A scoreboard at the top, a kill feed down the right, a name tag
   and health bar over every opponent in view, an arrow to each one that is not,
   and a connection line (`CONNECTED   PING 28 MS   7 KB/S`) at the top left.
@@ -298,12 +298,12 @@ onward). Nothing to install or download.
 
 | Input | Action |
 | --- | --- |
-| `A` / `D` or arrows | Walk along the surface, or steer in flight (see *Tuning*: both speeds are currently 0) |
-| `W` / `Up` / `Space` | Jump **toward the cursor**, three times as high as it once was (450 units a second off the ground), and it kicks the rock back. It never goes into the ground: a cursor below or level with the surface gives a low leap along it |
+| `A` / `D` or arrows | Run along the surface (220 units/s), or steer in flight if `AIR_ACCEL` is raised from its default 0 (see *Tuning*) |
+| `W` / `Up` / `Space` | Jump **toward the cursor**, three times as high as it once was (450 units a second off the ground); a short tap gives a smaller hop (about 30% of the height), and holding it gives the full jump. It never goes into the ground: a cursor below or level with the surface gives a low leap along it. It kicks the rock back |
 | Mouse | Aim |
 | Left mouse | Rapid fire. Bullets tunnel, so hold it to drill through |
-| Right mouse / `Shift` | Rocket: thrust toward the cursor (360 units/s², weakened in steps from 750), burns fuel |
-| `Left Alt` (hold) | Blast shield, once bought. Right Alt / AltGr does nothing |
+| `Shift`, or `Space` in the air | Rocket: thrust toward the cursor (360 units/s², weakened in steps from 750), burns fuel. On a rock, Space jumps instead: it is only the rocket once you have left the ground |
+| `Left Alt` or right mouse (hold) | Blast shield, once bought, facing away from the cursor. Right Alt / AltGr does nothing |
 | `F` / middle mouse | Homing shell, once bought; it goes for the enemy marked nearest the cursor. Fired at the rock beside or below you, it throws you clear: a rocket jump |
 | `G` | Missile salvo, once bought |
 | `N` | Throw a nuke, once bought |
@@ -511,7 +511,8 @@ it rather than working round it.
   fly and mountains barely stir.
 * **Homing weapons target by id**, not by pointer, so a target that dies or is
   compacted out of a vector cannot leave a dangling reference.
-* **The blast shield** is a band, not a line, a little wider than one step of a
+* **The blast shield** faces 180 degrees from the cursor (`shieldFacing()`), not the cursor
+  itself, and is a band, not a line, a little wider than one step of a
   fast bullet, so nothing can skip across it between frames. Blasts are tested by
   the angle of their centre against the plate's arc.
 * **The force field** is an outward acceleration that ramps from 30% at the rim
@@ -568,9 +569,17 @@ A few notes on what interacts with what:
   to hold, and the limit is distance divided by it (worked out from the distance before `DIST_SCALE` (0.75) shortens it, then multiplied by `TIME_SCALE`, 1.2). A pilot bot (`-leveltest`)
   crosses a level in about 7-30 s at the current thrust, so a 40-70 s limit leaves
   most of the clock for fighting. If you make the rocket weaker, raise the limit.
-* **Walking.** `WALK_SPEED` and `AIR_ACCEL` are currently 0, so `A`/`D` do not
-  move the spaceman and all travel is by jump and rocket. `-walktest` reports
-  itself as skipped in that state.
+* **Running.** `WALK_SPEED` is 220 (it was 0: walking used to be off); `AIR_ACCEL` is
+  still 0, so A/D do nothing in flight. `-walktest` checks the on-screen
+  direction at four points on a spinning rock, waiting for the player to
+  actually land before it reads a speed.
+* **A short jump vs. a held one.** Releasing Space within `JUMP_CUT_WINDOW`
+  (0.14 s) of leaving the ground caps the upward speed at `JUMP_SHORT_FACTOR`
+  (0.55) of a full jump, about 30% of the height; holding it past that window
+  gives the full jump. The cap is applied to the velocity along the jump's own
+  direction, so a sideways nudge from movement is untouched. `-jumptest` checks
+  both a tap and a hold. Bots always hold (`PlayerCmd::jumpHeld`), so they never
+  do the short hop.
 * **Rocket refuelling.** Fuel regenerates even while the button is held, so
   holding it on an empty tank sputters at a duty cycle of regen / (regen + burn).
   `-rockettest` checks that thrust never exceeds that budget.
